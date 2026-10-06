@@ -269,17 +269,20 @@ def demand_duck():
 
 @app.route('/api/forecast')
 def forecast():
-    """Agile import/export rates (p/kWh) and the national carbon intensity forecast, from the current half-hour on."""
+    """Agile import/export rates (p/kWh), the national carbon intensity forecast and the wind and solar output forecast, from the current half-hour on."""
     now = datetime.now(timezone.utc)
     start = now.replace(minute=now.minute // 30 * 30, second=0, microsecond=0).strftime('%Y-%m-%dT%H:%M:%SZ')
     conn = get_db_connection()
     agile = table_rows(conn, 'SELECT valid_from, import_p, export_p FROM agile_rates WHERE valid_from >= ? ORDER BY valid_from', (start,))
     carbon = table_rows(conn, 'SELECT period_from, forecast, index_label FROM carbon_forecast WHERE period_from >= ? ORDER BY period_from', (start,))
+    generation = table_rows(conn, 'SELECT * FROM generation_forecast WHERE period_from >= ? ORDER BY period_from', (start,))
     conn.close()
     return jsonify({
         "from": start,
         "agile": [{"t": r['valid_from'], "import": r['import_p'], "export": r['export_p']} for r in agile],
         "carbon": [{"t": r['period_from'], "forecast": r['forecast'], "index": r['index_label']} for r in carbon if r['forecast'] is not None],
+        # National wind (transmission + embedded) and solar output forecasts, MW
+        "generation": [{"t": r['period_from'], "wind": (r['wind_mw'] or 0) + (r['embedded_wind_mw'] or 0), "solar": r['solar_mw']} for r in generation],
     })
 
 @app.route('/api/frequency')

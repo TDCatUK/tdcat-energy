@@ -22,6 +22,7 @@ SOURCES = [
         ("lv_wind", "Small embedded wind", "NESO embedded wind forecast", 5),
         ("carbon", "Carbon intensity", "NESO Carbon Intensity API, current half-hour", 5),
         ("carbon_forecast", "Carbon forecast", "NESO Carbon Intensity API, next 48 hours", 30),
+        ("gen_forecast", "Wind & solar forecast", "Elexon wind forecast plus NESO embedded wind and solar", 30),
         ("neso_demand", "Half-hourly demand", "NESO Demand Data Update (When Demand Shifts)", 180),
         ("neso_history", "Historic demand", "NESO Historic Demand Data (Duck Curve)", 1440),
     ]),

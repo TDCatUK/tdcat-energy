@@ -228,11 +228,20 @@
             </section>
 
             <section id="agile-forecast" class="bg-ui-card p-6 rounded-2xl border border-octo-pink shadow-lg">
-                <div class="flex flex-wrap justify-between items-end gap-2 mb-1">
+                <div class="flex flex-wrap justify-between items-center gap-3 mb-1">
                     <h3 class="text-xl font-bold text-white">Coming Up: Agile Prices &amp; Carbon</h3>
-                    <span id="agile-asof" class="text-xs text-[#A1A1AA]">Octopus Agile and the national carbon intensity forecast</span>
+                    <div class="flex flex-wrap items-center gap-x-4 gap-y-2">
+                        <span id="agile-asof" class="text-xs text-[#A1A1AA]">Octopus Agile and the national carbon intensity forecast</span>
+                        <div class="flex items-center gap-2" title="Show the national wind and solar output forecast behind the chart">
+                            <span class="text-xs font-semibold text-ui-light uppercase tracking-wider">Wind &amp; solar</span>
+                            <div class="bg-[#18181B] rounded-full p-1 border border-ui-grey/50 flex text-sm shadow-inner">
+                                <button onclick="setAgileRenewables(true)" class="agile-ren-on px-4 py-1 rounded-full text-ui-light hover:text-white transition-all">On</button>
+                                <button onclick="setAgileRenewables(false)" class="agile-ren-off px-4 py-1 rounded-full bg-ui-grey text-white font-semibold shadow-sm transition-all">Off</button>
+                            </div>
+                        </div>
+                    </div>
                 </div>
-                <p class="text-sm text-ui-light mb-5">Agile import prices (bars) and export prices (dashed) for each half-hour that Octopus has published, and the national carbon intensity forecast for the next 48 hours. Tomorrow's prices usually appear at about 4pm. Green bars are the cheapest 3 hours, red bars the most expensive, and the shaded band is the greenest 3 hours.</p>
+                <p class="text-sm text-ui-light mb-5">Agile import prices (bars) and export prices (dashed) for each half-hour that Octopus has published, and the national carbon intensity forecast for the next 48 hours. Tomorrow's prices usually appear at about 4pm. Green bars are the cheapest 3 hours and red bars the most expensive; the green and red shaded bands are the greenest and dirtiest 3 hours. Switch on Wind &amp; solar to see the national wind and solar output forecast behind it all: when they rise, carbon (and usually price) falls.</p>
                 <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-5">
                     <div class="bg-ui-darkest/40 rounded-xl border border-ui-grey/50 p-4">
                         <p class="text-xs font-semibold text-ui-light uppercase tracking-wider mb-1">Cheapest 3 hours</p>

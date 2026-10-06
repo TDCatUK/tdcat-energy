@@ -723,7 +723,11 @@ def fetch_market_index_backfill(now_utc, timeout=20):
 FORECAST_TABLES = [
     "CREATE TABLE IF NOT EXISTS agile_rates (valid_from TEXT PRIMARY KEY, valid_to TEXT, import_p REAL, export_p REAL)",
     "CREATE TABLE IF NOT EXISTS carbon_forecast (period_from TEXT PRIMARY KEY, forecast REAL, actual REAL, index_label TEXT)",
+    # National wind and solar output forecasts (MW), the weather-driven part of the carbon forecast
+    "CREATE TABLE IF NOT EXISTS generation_forecast (period_from TEXT PRIMARY KEY, wind_mw REAL, embedded_wind_mw REAL, solar_mw REAL)",
 ]
+WINDFOR_URL = f"{ELEXON_API}/datasets/WINDFOR"
+NESO_EMBEDDED_FORECAST = 'db6c038f-98af-4570-ab60-24d71ebd0ae5'  # embedded wind and solar forecasts, half-hourly, about 2 weeks ahead
 
 def fetch_agile_rates(tariff_code, since, until=None, timeout=20):
     """Published half-hourly unit rates (p/kWh inc VAT) from `since` (to `until`), as {valid_from: (valid_to, rate)}.
@@ -758,6 +762,32 @@ def fetch_carbon_forecast(since, timeout=20):
         rows.append((r['from'].replace('Z', ':00Z'), intensity.get('forecast'), intensity.get('actual'), intensity.get('index')))
     return rows
 
+def fetch_generation_forecast(timeout=20):
+    """National wind and solar output forecast per half-hour: (start, transmission wind MW, embedded wind MW, solar MW).
+
+    Wind farms on the transmission network come from Elexon's WINDFOR (hourly, about two days ahead, so both
+    half-hours of an hour get its value). Embedded (distribution-connected) wind and solar, which is nearly all of
+    GB's solar, come from NESO's forecast. Only half-hours with both are kept.
+    """
+    res = requests.get(WINDFOR_URL, timeout=timeout)
+    res.raise_for_status()
+    wind = {}
+    for r in res.json().get('data', []):
+        hour = datetime.fromisoformat(r['startTime'].replace('Z', '+00:00'))
+        for minutes in (0, 30):
+            wind[hour + timedelta(minutes=minutes)] = float(r['generation'])
+    res = requests.get(f"{NESO_API}/datastore_search", params={'resource_id': NESO_EMBEDDED_FORECAST, 'limit': 2000}, timeout=timeout)
+    res.raise_for_status()
+    rows = []
+    for r in res.json()['result']['records']:
+        day = parse_settlement_date(r.get('SETTLEMENT_DATE'))
+        if not day or not r.get('SETTLEMENT_PERIOD'): continue
+        # Settlement periods count UK-time half-hours from midnight (TIME_GMT is the period's end)
+        start = datetime.combine(day, time.min, LONDON).astimezone(timezone.utc) + timedelta(minutes=30 * (int(r['SETTLEMENT_PERIOD']) - 1))
+        if start in wind:
+            rows.append((start.strftime('%Y-%m-%dT%H:%M:%SZ'), wind[start], float(r.get('EMBEDDED_WIND_FORECAST') or 0), float(r.get('EMBEDDED_SOLAR_FORECAST') or 0)))
+    return sorted(rows)
+
 def fetch_forecasts(now_utc, timeout=20):
     """Agile import/export rates (from 2 days back, which also fills any short gap) and the carbon forecast, when due.
     The first time, agile_rates is also back-filled to PRICE_HISTORY_START for the History page."""
@@ -783,6 +813,12 @@ def fetch_forecasts(now_utc, timeout=20):
                 out['done'].append('agile_backfill')
             except Exception as e:
                 print(f"Agile back-fill error: {e}")
+    try:
+        out['generation'] = fetch_generation_forecast(timeout)
+        report('gen_forecast', out['generation'], 'No forecast rows', max((r[0] for r in out['generation']), default=None))
+    except Exception as e:
+        print(f"Wind and solar forecast error: {e}")
+        report('gen_forecast', False, short_error(e))
     if CARBON_INTENSITY_URL:
         try:
             out['carbon'] = fetch_carbon_forecast(half_hour, timeout)
@@ -1403,6 +1439,7 @@ def fetch_and_store():
         cursor.executemany('''INSERT INTO carbon_forecast VALUES (?, ?, ?, ?) ON CONFLICT(period_from) DO UPDATE SET
             forecast = excluded.forecast, actual = COALESCE(excluded.actual, actual), index_label = excluded.index_label''',
             forecasts.get('carbon', []))
+        cursor.executemany('INSERT OR REPLACE INTO generation_forecast VALUES (?, ?, ?, ?)', forecasts.get('generation', []))
         # Log attempts as well as successes, so a failing source is retried after its interval rather than every run
         cursor.executemany('INSERT OR REPLACE INTO fetch_log VALUES (?, ?)', [(name, now_utc.isoformat()) for name in neso_demand['attempted'] + forecasts['attempted'] + forecasts.get('done', []) + midp_done])
         save_health(cursor, now_utc, started)
