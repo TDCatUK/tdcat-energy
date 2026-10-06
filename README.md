@@ -42,3 +42,4 @@ Secrets live in `.env` and `.powerwall`, which are not committed. See `CLAUDE.md
 - Battery % now matches the Tesla app: (raw − 5) / 0.95, because the app hides a 5% reserve. The database still stores the raw gateway figure, so history stays consistent.
 - Cleaned up `harvester.log`: fixed the `utcnow()` deprecation warnings at the source, moved the old log (23 Apr – 6 Oct) to `archive/harvester-2026-04-23_to_2026-10-06.log.gz`, and started a fresh log.
 - `harvester.log` now keeps only the last 90 days. The harvester trims older entries itself, about once a day, so the log stays around 2–3 MB.
+- Removed files not in use: five April database backups, the `archive/` folder (old one-off and test scripts, including two with hard-coded credentials, and the old log archive), and `.DS_Store`. The committed scripts can still be recovered from git history.

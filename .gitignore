@@ -4,9 +4,6 @@
 .powerwall
 *.pem
 *.key
-# Scratch scripts with hard-coded credentials
-archive/test_pw.py
-archive/visitors.py
 
 # --- Python ---
 .venv/

@@ -45,10 +45,9 @@ cron/launchd on OTTO (every 5 min)
 | `.env` | API keys, MPAN/MPRN, meter serials, tariff codes, endpoint URLs | **no (secret)** |
 | `.powerwall` | pypowerwall auth cookie cache | **no (secret)** |
 | `grid_data.db` | SQLite, ~48k rows since 2026-04-23, ~45 MB | **no (live data)** |
-| `harvester.log`, `static/forecast.json`, `*.BACKUP`, `grid_data_backup_*.db` | Live output / old backups. `harvester.log` is appended to by the scheduler on OTTO. `trim_log()` in `harvester.py` keeps the last 90 days (`LOG_KEEP_DAYS`), rewriting the file in place, only when stdout is that file. If clearing it by hand, empty it in place (`: > harvester.log`) right after a run; never delete or replace it. | **no** |
-| `archive/harvester-*.log.gz` | Old harvester logs | **no** |
-| `archive/` | Old one-off and test scripts (DB patchers, early harvester versions, API probes, `setup_db.py` schema seed). Not used by the app. **Never run the fix/patch scripts against the live DB.** | yes |
-| `archive/test_pw.py`, `archive/visitors.py` | Test scripts with hard-coded credentials | **no (secret)** |
+| `harvester.log`, `static/forecast.json` | Live output. `harvester.log` is appended to by the scheduler on OTTO. `trim_log()` in `harvester.py` keeps the last 90 days (`LOG_KEEP_DAYS`), rewriting the file in place, only when stdout is that file. If clearing it by hand, empty it in place (`: > harvester.log`) right after a run; never delete or replace it. | **no** |
+
+Old one-off scripts (DB patchers, early harvester versions, API probes, the `setup_db.py` schema seed) and the April DB backups were removed on 2026-10-06. The committed scripts can still be recovered from git: `git show 6086212:archive/<name>.py`.
 
 ## Database: `energy_snapshots`
 
@@ -92,7 +91,7 @@ Audit 2026-10-06. Items 1–8 were fixed the same day (see README Changes).
 8. ~~Carbon intensity fell to 0 when `actual` was null~~; it now falls back to `forecast`.
 9. `station_load_mw` is hard-coded to 500 MW (Elexon uses the same constant, so this is right).
 10. `/api/config` POST and `/admin` have no app-level auth; they rely on Cloudflare.
-11. ~~`datetime.utcnow()` deprecation warnings flooded `harvester.log`.~~ Fixed 2026-10-06 and the old log archived. The log now keeps 90 days (about 30 KB/day).
+11. ~~`datetime.utcnow()` deprecation warnings flooded `harvester.log`.~~ Fixed 2026-10-06; the old log was cleared. The log now keeps 90 days (about 30 KB/day).
 12. The stacked generation (generation + gross imports) sits about one export's worth above the dashed demand line (ITSDO + embedded), so `about.html`'s "over-producing" explanation is a simplification.
 
 ## Testing locally (safe)
