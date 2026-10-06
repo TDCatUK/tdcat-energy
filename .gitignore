@@ -20,6 +20,7 @@ __pycache__/
 *.log
 *.log.gz
 static/forecast.json
+battery_units.json
 
 # --- OS ---
 .DS_Store

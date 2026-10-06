@@ -19,7 +19,8 @@ const fuelInfoText = {
     "Hydro": "Traditional hydro-electric generation from flowing water and reservoirs.",
     "Pumped Storage": "Reservoirs that release water through turbines during high demand, and pump water back uphill when grid power is cheap.",
     "OCG": "Fast-starting but inefficient open-cycle gas turbines used strictly to cover sudden peaks in national demand.",
-    "Other": "Miscellaneous generation sources not strictly defined by major categories. Also absorbs trace outputs from decommissioned fossil networks."
+    "Other": "Generation Elexon doesn't put under a main fuel type, such as energy-from-waste and some smaller plants. Coal and oil are added here too; GB's last coal power station closed in September 2024.",
+    "Grid Batteries": "An unofficial estimate. Every 5 minutes this adds up the current level of each battery unit in the Balancing Mechanism: its own Physical Notification, or the latest NESO instruction (Bid-Offer Acceptance) where there is one. Batteries outside the Balancing Mechanism aren't included, and these are planned rather than metered levels, so treat it as an indication. Above zero = discharging into the grid, below zero = charging. See the About page for details."
 };
 
 const interconnectorCaps = {
@@ -49,7 +50,7 @@ const sortOrder = ["Wind", "LV Wind", "Solar", "Hydro", "Biomass", "Nuclear", "I
 let genChartInstance, flowChartInstance, historyChartInstance, carbonChartInstance, fuelDetailChartInstance, fourDemandChartInstance;
 let sparkDemand, sparkGen, sparkFlow, sparkFreq, sparkPrice, sparkMiPrice, sparkNiv, sparkCarbon, sparkPwLoad, sparkPwSolar, sparkPwBatt, sparkPwGrid, sparkOctImp, sparkOctExp;
 let chartPwLoad, chartPwSolar, chartPwBatt, chartPwGrid, chartPriceDetailInstance, chartOctoDetailInstance;
-let chartFreqDetailInstance, chartNivDetailInstance;
+let chartFreqDetailInstance, chartNivDetailInstance, chartBatteryInstance;
 let forecastTempChart, forecastSolarChart, forecastRainChart, forecastWindChart;
 
 let historyMode = 'GW', forecastMode = 24, powerUnit = 'kW', interconnectorMode = 'GW';
@@ -1147,6 +1148,8 @@ function renderDashboardData(data) {
         });
     }
 
+    renderBatteryPanel(data, timeLabels);
+
     let bridgedIntensity = [];
     let lastValidCarbon = rawIntensity.find(v => v > 0) || 0;
     for (let i = 0; i < rawIntensity.length; i++) {
@@ -1210,6 +1213,44 @@ function renderDashboardData(data) {
             } 
         }); 
     }
+}
+
+function renderBatteryPanel(data, timeLabels) {
+    const netEl = document.getElementById('bess-net');
+    if (!netEl || !data.battery) return;  // page or API from before the battery estimate existed
+
+    const b = data.battery;
+    const label = document.getElementById('bess-label');
+    if (b.discharge_mw === null || b.charge_mw === null) {
+        netEl.innerText = '---';
+        label.innerText = 'No estimate available';
+    } else {
+        const net = (b.discharge_mw - b.charge_mw) / 1000;
+        netEl.innerText = Math.abs(net).toFixed(2);
+        label.innerText = `${net >= 0 ? 'Net discharging' : 'Net charging'} · Out ${(b.discharge_mw / 1000).toFixed(2)} GW · In ${(b.charge_mw / 1000).toFixed(2)} GW`;
+    }
+
+    // Net GW per row: above zero = discharging into the grid, below zero = charging. Null where there's no estimate yet.
+    const series = data.history.map(h => (h.bess_discharge_mw == null || h.bess_charge_mw == null) ? null : (h.bess_discharge_mw - h.bess_charge_mw) / 1000);
+    const rgba = (hex, a) => `rgba(${hexToRgbChannels(hex).replace(/ /g, ',')}, ${a})`;
+    const fill = { target: 'origin', above: rgba(activeConfig.theme.tesla_green, 0.35), below: rgba(activeConfig.theme.brand_cyan, 0.35) };
+
+    if (chartBatteryInstance) {
+        chartBatteryInstance.data.labels = timeLabels;
+        chartBatteryInstance.data.datasets[0].data = series;
+        chartBatteryInstance.data.datasets[0].fill = fill;
+        chartBatteryInstance.update();
+        return;
+    }
+    chartBatteryInstance = new Chart(document.getElementById('chartBattery').getContext('2d'), {
+        type: 'line',
+        data: { labels: timeLabels, datasets: [{ label: 'Net battery flow (GW)', data: series, borderColor: '#D4D4D8', borderWidth: 1.5, pointRadius: 0, tension: 0.3, fill: fill }] },
+        options: {
+            responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
+            plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => ctx.raw === null ? 'No estimate' : `${ctx.raw >= 0 ? 'Discharging' : 'Charging'} ${Math.abs(ctx.raw).toFixed(2)} GW (net)` } } },
+            scales: { x: { grid: { display: false }, ticks: { color: '#A1A1AA', maxTicksLimit: 8 } }, y: { suggestedMin: 0, suggestedMax: 0, grid: { color: '#3F3F46' }, ticks: { color: '#A1A1AA', callback: v => v + ' GW' } } }
+        }
+    });
 }
 
 document.addEventListener('DOMContentLoaded', () => { updateDashboard(); setInterval(updateDashboard, 120000); });

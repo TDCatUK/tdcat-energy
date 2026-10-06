@@ -287,6 +287,24 @@
 
             <section id="price-expanded-chart" class="hidden mt-4"><div class="bg-ui-card p-6 rounded-2xl border border-ui-grey shadow-lg"><div class="flex justify-between items-center mb-4"><h3 class="text-xl font-bold text-white">24-Hour Price Comparison (£/MWh)</h3><button onclick="togglePriceCharts()" class="text-ui-grey hover:text-white text-2xl">&times;</button></div><div class="h-[300px] w-full relative"><canvas id="chartPriceDetail"></canvas></div></div></section>
 
+            <section id="battery-panel" class="bg-ui-card p-6 rounded-2xl border border-ui-grey shadow-lg">
+                <div class="flex flex-wrap justify-between items-start gap-4 mb-4">
+                    <div>
+                        <div class="flex items-center gap-2 flex-wrap">
+                            <h3 class="text-xl font-bold text-white">Grid Batteries</h3>
+                            <span class="text-[10px] uppercase tracking-widest px-2 py-0.5 rounded border border-brand-orange/60 text-brand-orange font-semibold">Unofficial estimate</span>
+                            <button onclick="openInfoModal('Grid Batteries')" class="w-5 h-5 rounded-full bg-ui-grey/50 text-white flex items-center justify-center text-[10px] font-bold hover:bg-brand-cyan hover:text-ui-darkest transition cursor-pointer">i</button>
+                        </div>
+                        <p class="text-xs text-[#A1A1AA] mt-1">Balancing Mechanism battery units: their notified plans, updated with NESO instructions.</p>
+                    </div>
+                    <div class="text-right">
+                        <p class="text-4xl xl:text-5xl font-extrabold text-white"><span id="bess-net">---</span> <span class="text-base font-semibold text-ui-light">GW</span></p>
+                        <p id="bess-label" class="text-xs text-[#A1A1AA] font-medium mt-1">---</p>
+                    </div>
+                </div>
+                <div class="h-[220px] w-full relative"><canvas id="chartBattery"></canvas></div>
+            </section>
+
             <section class="bg-ui-card p-6 rounded-2xl border border-ui-grey shadow-lg mt-4">
                 <h3 class="text-xl font-bold text-white mb-6">Generation by Fuel Type</h3>
                 

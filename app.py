@@ -203,7 +203,9 @@ def get_data():
             "oct_export_pence": row['oct_export_pence'] or 0,
             "exports_mw": s['exports_mw'],
             "psh_pumping_mw": s['psh_pumping_mw'],
-            "solar_mw": s['solar_mw']
+            "solar_mw": s['solar_mw'],
+            "bess_discharge_mw": row.get('bess_discharge_mw'),
+            "bess_charge_mw": row.get('bess_charge_mw')
         })
         carbon_history.append({"time": row['timestamp'], "intensity": row['carbon_intensity'] or 0})
 
@@ -276,6 +278,10 @@ def get_data():
             "yest_gas_m3": yest_gas_m3,
             "yest_gas_kwh": yest_gas_m3 * 11.222,
             "yest_date": latest['oct_yest_date'] or ''
+        },
+        "battery": {
+            "discharge_mw": latest.get('bess_discharge_mw'),
+            "charge_mw": latest.get('bess_charge_mw')
         },
         "cloudflare": {
             "visits": latest.get('cf_visits_24h', 0),

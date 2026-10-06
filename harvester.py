@@ -1,4 +1,5 @@
 import os
+import re
 import sys
 import requests
 import sqlite3
@@ -222,6 +223,81 @@ def fetch_octo_daily(timeout=20):
     return imp, exp, gas, chosen.strftime('%d %b')
 
 
+# === GRID BATTERIES (UNOFFICIAL ESTIMATE) ===
+ELEXON_API = "https://data.elexon.co.uk/bmrs/api/v1"
+BATTERY_UNITS_FILE = 'battery_units.json'
+BATTERY_NG_ID = re.compile(r'^[A-Z0-9]{4}B-\d+$')
+BATTERY_NAME = re.compile(r'batter|bess|energy storage', re.I)
+NOT_BATTERY_FUELS = {'WIND', 'CCGT', 'OCGT', 'NUCLEAR', 'BIOMASS', 'COAL', 'NPSHYD', 'PS'}
+
+def load_battery_units(timeout=20):
+    """Elexon IDs of battery BM units, cached in battery_units.json and refreshed daily.
+
+    Elexon has no battery fuel type, so batteries are recognised by National Grid's
+    unit ID convention (fifth character 'B', e.g. BLWNB-1) or a name like 'BESS'.
+    """
+    cached = []
+    try:
+        with open(BATTERY_UNITS_FILE) as f: cached = json.load(f)
+        if datetime.now().timestamp() - os.path.getmtime(BATTERY_UNITS_FILE) < 86400: return cached
+    except (OSError, ValueError): pass
+    try:
+        units = requests.get(f"{ELEXON_API}/reference/bmunits/all", timeout=timeout).json()
+        found = sorted(u['elexonBmUnit'] for u in units
+                       if u.get('elexonBmUnit') and u.get('fuelType') not in NOT_BATTERY_FUELS
+                       and (BATTERY_NG_ID.match(u.get('nationalGridBmUnit') or '') or BATTERY_NAME.search(u.get('bmUnitName') or '')))
+        if found:
+            with open(BATTERY_UNITS_FILE, 'w') as f: json.dump(found, f)
+            return found
+    except Exception as e:
+        print(f"Battery unit list error: {e}")
+    return cached
+
+def level_at(segment, t):
+    """MW level of a PN/BOALF segment at time t (linear between its ends), or None outside it."""
+    t0 = datetime.fromisoformat(segment['timeFrom'].replace('Z', '+00:00'))
+    t1 = datetime.fromisoformat(segment['timeTo'].replace('Z', '+00:00'))
+    if not t0 <= t <= t1: return None
+    span = (t1 - t0).total_seconds()
+    return segment['levelFrom'] + ((t - t0).total_seconds() / span if span else 0) * (segment['levelTo'] - segment['levelFrom'])
+
+def fetch_battery_flow(now_utc, timeout=20):
+    """Unofficial estimate of GB grid-battery flow now: (discharging MW, charging MW).
+
+    Each battery's Physical Notification (its own plan), replaced by the latest Bid-Offer
+    Acceptance where NESO has redispatched it. Batteries outside the Balancing Mechanism
+    aren't visible, so this undercounts. Returns (None, None) if the data isn't available.
+    """
+    units = load_battery_units(timeout)
+    if not units: return None, None
+    iso = lambda t: t.strftime('%Y-%m-%dT%H:%M:%SZ')
+    def stream(dataset, lookback):
+        params = [('from', iso(now_utc - lookback)), ('to', iso(now_utc + timedelta(minutes=1)))] + [('bmUnit', u) for u in units]
+        res = requests.get(f"{ELEXON_API}/datasets/{dataset}/stream", params=params, timeout=timeout)
+        res.raise_for_status()
+        data = res.json()
+        return data if isinstance(data, list) else data.get('data', [])
+    try:
+        levels = {}
+        for seg in stream('PN', timedelta(minutes=1)):
+            mw = level_at(seg, now_utc)
+            if mw is not None: levels[seg['bmUnit']] = mw
+        # Acceptances last up to about an hour, so 90 minutes of history covers any still in force
+        accepted = {}
+        for seg in stream('BOALF', timedelta(minutes=90)):
+            mw = level_at(seg, now_utc)
+            key = (seg.get('acceptanceTime') or '', seg.get('acceptanceNumber') or 0)
+            if mw is not None and (seg['bmUnit'] not in accepted or key > accepted[seg['bmUnit']][0]):
+                accepted[seg['bmUnit']] = (key, mw)
+        levels.update({unit: mw for unit, (_, mw) in accepted.items()})
+        if not levels: return None, None
+        return (round(sum(mw for mw in levels.values() if mw > 0)),
+                round(sum(-mw for mw in levels.values() if mw < 0)))
+    except Exception as e:
+        print(f"Battery estimate error: {e}")
+        return None, None
+
+
 LOG_FILE = 'harvester.log'
 LOG_KEEP_DAYS = 90
 
@@ -316,8 +392,9 @@ def fetch_and_store():
                      temp_c, wind_mph, daylight_secs, cloud_cover, 
                      oct_import_pence, oct_export_pence, oct_yest_import, oct_yest_export, 
                      oct_yest_gas, oct_yest_date,
-                     cf_visits_24h, cf_requests_24h, cf_bytes_24h, embedded_wind_mw)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     cf_visits_24h, cf_requests_24h, cf_bytes_24h, embedded_wind_mw,
+                     bess_discharge_mw, bess_charge_mw)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''', (
                     now_utc.strftime('%Y-%m-%dT%H:%M:%SZ'), # FRESH TIMESTAMP
                     last.get('carbon_intensity', 0), last.get('demand_mw', 0), last.get('total_generation_mw', 0), last.get('net_flow_mw', 0),
@@ -328,7 +405,8 @@ def fetch_and_store():
                     last.get('oct_import_pence', 0), last.get('oct_export_pence', 0), last.get('oct_yest_import', 0), last.get('oct_yest_export', 0), 
                     last.get('oct_yest_gas', 0), last.get('oct_yest_date', ''),
                     last.get('cf_visits_24h', 0), last.get('cf_requests_24h', 0), last.get('cf_bytes_24h', 0),
-                    last.get('embedded_wind_mw', 0)
+                    last.get('embedded_wind_mw', 0),
+                    last.get('bess_discharge_mw'), last.get('bess_charge_mw')
                 ))
                 conn.commit()
                 conn.close()
@@ -601,6 +679,9 @@ def fetch_and_store():
         # === CLOUDFLARE API ===
         cf_visits, cf_requests, cf_bytes = get_cloudflare_stats(debug=False)
 
+        # === GRID BATTERIES (UNOFFICIAL ESTIMATE) ===
+        bess_discharge_mw, bess_charge_mw = fetch_battery_flow(now_utc, req_timeout)
+
         # === DATABASE INJECTION ===
         conn = sqlite3.connect('grid_data.db')
         cursor = conn.cursor()
@@ -613,8 +694,9 @@ def fetch_and_store():
              temp_c, wind_mph, daylight_secs, cloud_cover, 
              oct_import_pence, oct_export_pence, oct_yest_import, oct_yest_export, 
              oct_yest_gas, oct_yest_date,
-             cf_visits_24h, cf_requests_24h, cf_bytes_24h, embedded_wind_mw)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             cf_visits_24h, cf_requests_24h, cf_bytes_24h, embedded_wind_mw,
+             bess_discharge_mw, bess_charge_mw)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             now_utc.strftime('%Y-%m-%dT%H:%M:%SZ'),
             carbon_intensity, true_demand, total_generation, total_net_flow,
@@ -624,7 +706,8 @@ def fetch_and_store():
             temp_c, wind_mph, daylight_secs, cloud_cover, 
             oct_imp_pence, oct_exp_pence, oct_yest_imp, oct_yest_exp, oct_yest_gas, oct_final_date,
             cf_visits, cf_requests, cf_bytes,
-            embedded_wind_mw
+            embedded_wind_mw,
+            bess_discharge_mw, bess_charge_mw
         ))
         conn.commit()
         conn.close()

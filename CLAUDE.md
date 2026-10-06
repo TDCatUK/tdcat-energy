@@ -26,7 +26,7 @@ cron/launchd on OTTO (every 5 min)
  app.py (Flask :5000)
    /             templates/index.html  + static/script.js  (polls every 2 min)
    /admin        templates/admin.html  (edits config.json via POST /api/config)
-   /about        templates/about.html  (explains the metrics)
+   /about        templates/about.html  (explains the metrics; keep it in step with any maths changes)
    /api/data     latest row + last 288 rows (≈24 h) + today's Powerwall kWh totals
    /api/config   GET merges config.json over DEFAULT_CONFIG; POST overwrites config.json
 ```
@@ -44,6 +44,7 @@ cron/launchd on OTTO (every 5 min)
 | `requirements.txt` | Flask, pypowerwall, python-dotenv, requests, teslapy, urllib3 | yes |
 | `.env` | API keys, MPAN/MPRN, meter serials, tariff codes, endpoint URLs | **no (secret)** |
 | `.powerwall` | pypowerwall auth cookie cache | **no (secret)** |
+| `battery_units.json` | Cached list of battery BM unit IDs, refreshed daily by the harvester | **no (live state)** |
 | `grid_data.db` | SQLite, ~48k rows since 2026-04-23, ~45 MB | **no (live data)** |
 | `harvester.log`, `static/forecast.json` | Live output. `harvester.log` is appended to by the scheduler on OTTO. `trim_log()` in `harvester.py` keeps the last 90 days (`LOG_KEEP_DAYS`), rewriting the file in place, only when stdout is that file. If clearing it by hand, empty it in place (`: > harvester.log`) right after a run; never delete or replace it. | **no** |
 
@@ -59,6 +60,7 @@ Primary key `timestamp` (ISO UTC string `YYYY-MM-DDTHH:MM:SSZ`). Columns were ad
 - Weather: `temp_c`, `wind_mph`, `daylight_secs`, `cloud_cover`
 - Octopus: `oct_import_pence`, `oct_export_pence` (p/kWh inc VAT), `oct_yest_import`, `oct_yest_export` (kWh), `oct_yest_gas` (m³), `oct_yest_date`
 - Cloudflare: `cf_visits_24h`, `cf_requests_24h`, `cf_bytes_24h`
+- Grid batteries (unofficial estimate, added 2026-10-06, NULL before then): `bess_discharge_mw`, `bess_charge_mw`, both positive
 
 **Stored-value quirks (don't change these without migrating history):**
 - `demand_mw` is stored as **ITSDO + PV_Live solar + embedded wind**, not raw ITSDO. `app.py` takes the `Solar` and `LV Wind` mix values back off to get ITSDO (this matches Elexon's ITSDO to within rounding).
@@ -68,6 +70,10 @@ Primary key `timestamp` (ISO UTC string `YYYY-MM-DDTHH:MM:SSZ`). Columns were ad
 - `oct_yest_*` are totals for the most recent UK day that's **complete on all three meters** (export and gas lag import by about a day), and `oct_yest_date` is that day.
 
 **Demand identity (checked against Elexon 2026-10-06):** ITSDO = INDO + exports + pumped-storage pumping + 500 MW station load. Net = INDO + embedded. Gross = ITSDO + embedded.
+
+## Grid battery estimate (unofficial)
+
+Elexon has no battery fuel type, so `load_battery_units()` picks batteries out of `/reference/bmunits/all` by National Grid ID convention (5th character `B`, e.g. `BLWNB-1`) or a name matching battery/BESS/energy storage, excluding conventional fuel types (about 146 units, 7.3 GW). Each run, `fetch_battery_flow()` takes each unit's Physical Notification level now (`/datasets/PN/stream`, filtered by `bmUnit`), overridden by the latest Bid-Offer Acceptance in force (`/datasets/BOALF/stream`, 90 min lookback). Batteries outside the BM aren't visible. Elexon FUELINST `OTHER` never goes negative, so batteries aren't in it and aren't double-counted.
 
 ## Data sources (endpoints in `.env`)
 
@@ -90,9 +96,10 @@ Audit 2026-10-06. Items 1–8 were fixed the same day (see README Changes).
 7. ~~Greenlink (`INTGRNL`) unmapped.~~ Interconnector capacities are still hard-coded in `script.js`.
 8. ~~Carbon intensity fell to 0 when `actual` was null~~; it now falls back to `forecast`.
 9. `station_load_mw` is hard-coded to 500 MW (Elexon uses the same constant, so this is right).
-10. `/api/config` POST and `/admin` have no app-level auth; they rely on Cloudflare.
+10. **Security:** Cloudflare Access protects `/admin`, but `/api/config` is public (checked 2026-10-06: GET returns 200 without login), and Flask accepts `POST /api/config` with no auth, so anyone could probably overwrite `config.json`, footer links included. (Not tested, to avoid changing live config.) Fix: move the save route under `/admin/` and cover `/admin/*` in Access, or check the `Cf-Access-Jwt-Assertion` header.
 11. ~~`datetime.utcnow()` deprecation warnings flooded `harvester.log`.~~ Fixed 2026-10-06; the old log was cleared. The log now keeps 90 days (about 30 KB/day).
-12. The stacked generation (generation + gross imports) sits about one export's worth above the dashed demand line (ITSDO + embedded), so `about.html`'s "over-producing" explanation is a simplification.
+12. The stacked supply (generation + gross imports) sits a median 0.8 GW (2.4%) above the dashed demand line (ITSDO + embedded), ranging from −1.3 to +3.8 GW over a day. This comes from timing (5-min FUELINST vs half-hourly ITSDO) and modelled embedded generation; `about.html` explains it.
+13. FUELINST `Other` had a one-off 10.2 GW value in the last 30 days (normally ~0.5–1 GW): probably a bad Elexon row, not yet investigated.
 
 ## Testing locally (safe)
 
