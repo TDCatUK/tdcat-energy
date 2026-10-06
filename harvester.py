@@ -1,4 +1,5 @@
 import os
+import sys
 import requests
 import sqlite3
 import json
@@ -219,6 +220,47 @@ def fetch_octo_daily(timeout=20):
     if chosen is None: return 0, 0, 0, ""
     imp, exp, gas = (m.get(chosen, (0, 0))[0] if m else 0 for m in per_meter)
     return imp, exp, gas, chosen.strftime('%d %b')
+
+
+LOG_FILE = 'harvester.log'
+LOG_KEEP_DAYS = 90
+
+def log_time(line):
+    """UTC time from a b'[YYYY-MM-DD HH:MM:SS] Harvesting...' line, else None."""
+    if line[:1] == b'[' and line[20:21] == b']':
+        try: return datetime.strptime(line[1:20].decode('ascii'), '%Y-%m-%d %H:%M:%S')
+        except ValueError: pass
+    return None
+
+def trim_log():
+    """Keep only the last LOG_KEEP_DAYS days of harvester.log.
+
+    The scheduler on OTTO appends this script's output to the log, so it's rewritten
+    in place (same file), never replaced. Does nothing unless stdout really is that
+    file, so test runs can't touch the live log. Most runs only read the first entry;
+    a trim happens once the oldest entry is a day past the limit. Binary mode keeps
+    the kept lines byte-for-byte (some logged error pages contain CRLFs).
+    """
+    try:
+        if not os.path.exists(LOG_FILE) or not os.path.samestat(os.fstat(sys.stdout.fileno()), os.stat(LOG_FILE)):
+            return
+        cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=LOG_KEEP_DAYS)
+        with open(LOG_FILE, 'r+b') as f:
+            oldest = None
+            while oldest is None:
+                line = f.readline()
+                if not line: return
+                oldest = log_time(line)
+            if oldest >= cutoff - timedelta(days=1): return
+            f.seek(0)
+            lines = f.readlines()
+            keep_from = next((i for i, line in enumerate(lines) if (t := log_time(line)) and t >= cutoff), len(lines))
+            f.seek(0)
+            f.writelines(lines[keep_from:])
+            f.truncate()
+        print(f"Trimmed {LOG_FILE} to the last {LOG_KEEP_DAYS} days ({keep_from} old lines removed)")
+    except Exception as e:
+        print(f"Log trim error: {e}")
 
 
 def fetch_and_store():
@@ -593,4 +635,5 @@ def fetch_and_store():
 
 
 if __name__ == '__main__':
+    trim_log()
     fetch_and_store()
