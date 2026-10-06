@@ -691,21 +691,62 @@ def fetch_neso_demand(timeout=60):
     return out
 
 
+# === PRICE HISTORY (verified half-hourly records, for the History page) ===
+PRICE_HISTORY_START = datetime(2026, 4, 23, tzinfo=timezone.utc)  # when energy_snapshots begins
+# Every published market index half-hour, as Elexon publishes it (some periods appear hours late, mostly at weekends).
+# Volume 0 means nothing traded and the price is a placeholder, so readers use volume > 0.
+MARKET_INDEX_TABLE = """CREATE TABLE IF NOT EXISTS market_index_hh (
+    period_start TEXT, provider TEXT, settlement_date TEXT, settlement_period INTEGER, price REAL, volume REAL,
+    PRIMARY KEY (period_start, provider))"""
+
+def market_index_rows(data):
+    """Elexon market-index items as market_index_hh rows."""
+    return [(r['startTime'], r['dataProvider'], r.get('settlementDate'), r.get('settlementPeriod'), float(r['price']), float(r.get('volume') or 0))
+            for r in data if r.get('startTime') and r.get('dataProvider') and r.get('price') is not None]
+
+def fetch_market_index_backfill(now_utc, timeout=20):
+    """Every half-hour from PRICE_HISTORY_START to 2 days ago (the live fetch covers the last 2 days), 7 days per
+    request (Elexon's limit). Runs until it has succeeded once (logged as 'midp_backfill'); about 25 quick requests."""
+    if not ELEXON_MARKET_INDEX_URL or not fetch_due('midp_backfill', 24 * 365 * 10): return None
+    fmt = '%Y-%m-%dT%H:%M:%SZ'
+    rows, end = [], now_utc - timedelta(days=2)
+    while end > PRICE_HISTORY_START:
+        start = max(PRICE_HISTORY_START, end - timedelta(days=7))
+        res = requests.get(ELEXON_MARKET_INDEX_URL, params={'from': start.strftime(fmt), 'to': end.strftime(fmt)}, timeout=timeout)
+        res.raise_for_status()
+        rows += market_index_rows(res.json().get('data', []))
+        end = start
+    return rows
+
+
 # === UPCOMING AGILE PRICES AND CARBON FORECAST (every 30 minutes) ===
 FORECAST_TABLES = [
     "CREATE TABLE IF NOT EXISTS agile_rates (valid_from TEXT PRIMARY KEY, valid_to TEXT, import_p REAL, export_p REAL)",
     "CREATE TABLE IF NOT EXISTS carbon_forecast (period_from TEXT PRIMARY KEY, forecast REAL, actual REAL, index_label TEXT)",
 ]
 
-def fetch_agile_rates(tariff_code, since, timeout=20):
-    """Published half-hourly unit rates (p/kWh inc VAT) from `since` on, as {valid_from: (valid_to, rate)}.
+def fetch_agile_rates(tariff_code, since, until=None, timeout=20):
+    """Published half-hourly unit rates (p/kWh inc VAT) from `since` (to `until`), as {valid_from: (valid_to, rate)}.
 
-    Octopus publishes the next day's Agile rates (to 23:00 UK time) at about 4pm.
+    Octopus publishes the next day's Agile rates (to 23:00 UK time) at about 4pm, and keeps every past rate.
+    Long ranges come back in pages of up to 1,500, which are followed.
     """
     url = f"{OCTOPUS_BASE_URL.rstrip('/')}/products/{tariff_code}/electricity-tariffs/E-1R-{tariff_code}-{OCT_REGION}/standard-unit-rates/"
-    res = requests.get(url, params={'period_from': since.strftime('%Y-%m-%dT%H:%M:%SZ'), 'page_size': 200}, timeout=timeout)
-    res.raise_for_status()
-    return {r['valid_from']: (r.get('valid_to'), float(r['value_inc_vat'])) for r in res.json().get('results', []) if r.get('valid_from')}
+    params = {'period_from': since.strftime('%Y-%m-%dT%H:%M:%SZ'), 'page_size': 1500}
+    if until: params['period_to'] = until.strftime('%Y-%m-%dT%H:%M:%SZ')
+    rates = {}
+    while url:
+        res = requests.get(url, params=params, timeout=timeout)
+        res.raise_for_status()
+        body = res.json()
+        rates.update({r['valid_from']: (r.get('valid_to'), float(r['value_inc_vat'])) for r in body.get('results', []) if r.get('valid_from')})
+        url, params = body.get('next'), None  # the next link carries its own query
+    return rates
+
+def merge_agile(imp, exp):
+    """Import and export rates as agile_rates rows: (valid_from, valid_to, import p, export p)."""
+    return [(vf, (imp.get(vf) or exp.get(vf))[0], imp.get(vf, (None, None))[1], exp.get(vf, (None, None))[1])
+            for vf in sorted(set(imp) | set(exp))]
 
 def fetch_carbon_forecast(since, timeout=20):
     """National carbon intensity (gCO2/kWh) for each half-hour of the 48 hours from `since`: (from, forecast, actual, index)."""
@@ -718,21 +759,30 @@ def fetch_carbon_forecast(since, timeout=20):
     return rows
 
 def fetch_forecasts(now_utc, timeout=20):
-    """Agile import/export rates and the carbon forecast from the current half-hour on, when due."""
-    out = {'attempted': []}
+    """Agile import/export rates (from 2 days back, which also fills any short gap) and the carbon forecast, when due.
+    The first time, agile_rates is also back-filled to PRICE_HISTORY_START for the History page."""
+    out = {'attempted': [], 'done': []}
     if not fetch_due('forecasts', 0.4): return out  # each half-hour (runs are 5 minutes apart)
     out['attempted'].append('forecasts')
     half_hour = now_utc.replace(minute=now_utc.minute // 30 * 30, second=0, microsecond=0)
     if OCTOPUS_BASE_URL and OCT_IMP_TARIFF:
         try:
-            imp = fetch_agile_rates(OCT_IMP_TARIFF, half_hour, timeout)
-            exp = fetch_agile_rates(OCT_EXP_TARIFF, half_hour, timeout) if OCT_EXP_TARIFF else {}
-            out['agile'] = [(vf, (imp.get(vf) or exp.get(vf))[0], imp.get(vf, (None, None))[1], exp.get(vf, (None, None))[1])
-                            for vf in sorted(set(imp) | set(exp))]
+            since = half_hour - timedelta(days=2)
+            imp = fetch_agile_rates(OCT_IMP_TARIFF, since, timeout=timeout)
+            exp = fetch_agile_rates(OCT_EXP_TARIFF, since, timeout=timeout) if OCT_EXP_TARIFF else {}
+            out['agile'] = merge_agile(imp, exp)
             report('agile_forecast', out['agile'], 'No rates published', max((r[1] or r[0] for r in out['agile']), default=None))
         except Exception as e:
             print(f"Agile rates error: {e}")
             report('agile_forecast', False, short_error(e))
+        if fetch_due('agile_backfill', 24 * 365 * 10):  # once, until it succeeds
+            try:
+                imp = fetch_agile_rates(OCT_IMP_TARIFF, PRICE_HISTORY_START, half_hour, timeout * 3)
+                exp = fetch_agile_rates(OCT_EXP_TARIFF, PRICE_HISTORY_START, half_hour, timeout * 3) if OCT_EXP_TARIFF else {}
+                out['agile'] = merge_agile(imp, exp) + out.get('agile', [])
+                out['done'].append('agile_backfill')
+            except Exception as e:
+                print(f"Agile back-fill error: {e}")
     if CARBON_INTENSITY_URL:
         try:
             out['carbon'] = fetch_carbon_forecast(half_hour, timeout)
@@ -1189,10 +1239,13 @@ def fetch_and_store():
         # === DAY-AHEAD & MARKET INDEX PRICES (MIDP PROXY) ===
         latest_day_ahead_price = 0.0
         latest_market_index_price = 0.0
+        midp_history = []
         try:
             if ELEXON_MARKET_INDEX_URL:
-                # Look back 6 h so there's always a published period, even just after midnight
-                window_start = now_utc - timedelta(hours=6)
+                # One request covers the last 2 days: every half-hour goes into market_index_hh (Elexon publishes some
+                # late, so later runs fill them in), and the live price is the newest traded one in the last 6 hours
+                window_start = now_utc - timedelta(days=2)
+                live_since = (now_utc - timedelta(hours=6)).strftime('%Y-%m-%dT%H:%M:%SZ')
                 end_time = (now_utc + timedelta(hours=3)).strftime('%Y-%m-%dT%H:%M:%SZ')
                 res = requests.get(ELEXON_MARKET_INDEX_URL, params={
                     'from': window_start.strftime('%Y-%m-%dT%H:%M:%SZ'),
@@ -1202,11 +1255,12 @@ def fetch_and_store():
                 if res.status_code == 200:
                     data = res.json().get('data', [])
                     if data:
+                        midp_history = market_index_rows(data)
                         data.sort(key=lambda x: x.get('startTime', ''), reverse=True)
                         now_str = now_utc.strftime('%Y-%m-%dT%H:%M:%SZ')
                         
                         # A price with zero traded volume is a placeholder 0, not a real price
-                        current_period_data = [item for item in data if item.get('startTime', '') <= now_str and (item.get('volume') or 0) > 0]
+                        current_period_data = [item for item in data if live_since <= item.get('startTime', '') <= now_str and (item.get('volume') or 0) > 0]
 
                         # Use None instead of 0.0 to allow negative and zero prices
                         apx_price = None
@@ -1271,6 +1325,16 @@ def fetch_and_store():
         # === UPCOMING AGILE PRICES AND CARBON FORECAST (every 30 minutes) ===
         forecasts = fetch_forecasts(now_utc, req_timeout)
 
+        # === MARKET INDEX HISTORY BACK-FILL (once) ===
+        midp_done = []
+        try:
+            backfill = fetch_market_index_backfill(now_utc, req_timeout)
+            if backfill is not None:
+                midp_history += backfill
+                midp_done.append('midp_backfill')
+        except Exception as e:
+            print(f"Market index back-fill error: {e}")
+
         # === DATABASE INJECTION ===
         conn = sqlite3.connect('grid_data.db')
         cursor = conn.cursor()
@@ -1328,6 +1392,8 @@ def fetch_and_store():
             cursor.executemany('INSERT INTO duck_profiles VALUES (?, ?, ?, ?, ?, ?)', [(year, *p) for p in profiles])
             cursor.execute('INSERT OR REPLACE INTO duck_records VALUES (?, ?, ?, ?, ?, ?, ?)',
                            (year, best[0] * 100, *best[1:], over) if best else (year, None, None, None, None, None, over))
+        cursor.execute(MARKET_INDEX_TABLE)
+        cursor.executemany('INSERT OR REPLACE INTO market_index_hh VALUES (?, ?, ?, ?, ?, ?)', midp_history)
         for table in FORECAST_TABLES:
             cursor.execute(table)
         # Import and export arrive separately, so a missing one never wipes a stored rate
@@ -1338,7 +1404,7 @@ def fetch_and_store():
             forecast = excluded.forecast, actual = COALESCE(excluded.actual, actual), index_label = excluded.index_label''',
             forecasts.get('carbon', []))
         # Log attempts as well as successes, so a failing source is retried after its interval rather than every run
-        cursor.executemany('INSERT OR REPLACE INTO fetch_log VALUES (?, ?)', [(name, now_utc.isoformat()) for name in neso_demand['attempted'] + forecasts['attempted']])
+        cursor.executemany('INSERT OR REPLACE INTO fetch_log VALUES (?, ?)', [(name, now_utc.isoformat()) for name in neso_demand['attempted'] + forecasts['attempted'] + forecasts.get('done', []) + midp_done])
         save_health(cursor, now_utc, started)
         conn.commit()
         conn.close()

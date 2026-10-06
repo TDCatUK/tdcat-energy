@@ -427,14 +427,8 @@ def fold_row(row):
         add("mix:battery", row['bess_discharge_mw'])
     if row['carbon_intensity']:
         add("carbon", row['carbon_intensity'])
-    if row['market_index_price']:
-        add("mip", row['market_index_price'])
-        extreme("mip", row['market_index_price'])
     if row['wholesale_price']:
         add("ssp", row['wholesale_price'])
-    if row['oct_import_pence'] or row['oct_export_pence']:
-        add("agile_import", row['oct_import_pence'] or 0)
-        add("agile_export", row['oct_export_pence'] or 0)
     pw = [row['pw_solar_w'] or 0, row['pw_home_w'] or 0, row['pw_grid_w'] or 0, row['pw_battery_w'] or 0]
     if any(pw) or (row['pw_level'] or 0) > 0:  # all zeros means the Powerwall wasn't reachable
         solar, home, grid, battery = pw
@@ -496,6 +490,36 @@ def combine_frequency(hours):
     return {"min": min(r[0] for r in rows), "max": max(r[1] for r in rows), "readings": count,
             "outside_min": outside * 15 / 60, "outside_pct": outside / count * 100}
 
+def price_series(conn, buckets):
+    """Market index and Agile prices per bucket, from the verified half-hourly tables the harvester keeps
+    (market_index_hh from Elexon, agile_rates from Octopus), not the 5-minute snapshots, whose prices could be
+    missing or stale while Elexon was slow to publish. Only traded half-hours (volume > 0) count for the market index.
+    Returns per-bucket lists and every half-hour price in the whole range."""
+    if not buckets: return {k: [] for k in ("mip", "mip_min", "mip_max", "agile_import", "agile_export")}, {"mip": [], "agile_import": []}
+    fmt = lambda t: datetime.fromtimestamp(t, timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+    first, last = fmt(buckets[0][0]), fmt(buckets[-1][1][-1] + 3600)
+    by_hour = {}
+    def put(start, key, value):
+        if value is not None:
+            by_hour.setdefault(int(parse_utc(start).timestamp()) // 3600 * 3600, {}).setdefault(key, []).append(value)
+    for r in table_rows(conn, "SELECT period_start, price FROM market_index_hh WHERE provider = 'APXMIDP' AND volume > 0 AND period_start >= ? AND period_start < ?", (first, last)):
+        put(r['period_start'], "mip", r['price'])
+    for r in table_rows(conn, "SELECT valid_from, import_p, export_p FROM agile_rates WHERE valid_from >= ? AND valid_from < ?", (first, last)):
+        put(r['valid_from'], "agile_import", r['import_p'])
+        put(r['valid_from'], "agile_export", r['export_p'])
+    collect = lambda hours, key: [v for h in hours for v in by_hour.get(h, {}).get(key, [])]
+    mean = lambda values: sum(values) / len(values) if values else None
+    out = {k: [] for k in ("mip", "mip_min", "mip_max", "agile_import", "agile_export")}
+    for _, hours in buckets:
+        mip = collect(hours, "mip")
+        out["mip"].append(mean(mip))
+        out["mip_min"].append(min(mip) if mip else None)
+        out["mip_max"].append(max(mip) if mip else None)
+        for key in ("agile_import", "agile_export"):
+            out[key].append(mean(collect(hours, key)))
+    every_hour = [h for _, hours in buckets for h in hours]
+    return out, {"mip": collect(every_hour, "mip"), "agile_import": collect(every_hour, "agile_import")}
+
 def average(c, key):
     return c["sum"][key] / c["n"][key] if c["n"].get(key) else None
 
@@ -527,10 +551,11 @@ def history():
         try:
             refresh_history(conn)
             refresh_frequency(conn, low, high)
+            # Start at the first bucket with data (the database begins on 23 April 2026)
+            while buckets and not any(h in history_hours for h in buckets[0][1]): buckets.pop(0)
+            prices, all_prices = price_series(conn, buckets)
         finally:
             conn.close()
-        # Start at the first bucket with data (the database begins on 23 April 2026)
-        while buckets and not any(h in history_hours for h in buckets[0][1]): buckets.pop(0)
         combined = [combine(hours) for _, hours in buckets]
         frequency = [combine_frequency(hours) for _, hours in buckets]
         whole = combine([h for _, hours in buckets for h in hours])
@@ -542,7 +567,7 @@ def history():
     share = lambda *keys: sum(whole["sum"].get("mix:" + k, 0) for k in keys) / supply * 100 if supply else None
     def best(key, highest):
         """The bucket with the highest (or lowest) average for `key`."""
-        values = [(v, buckets[i][0]) for i, v in enumerate(series(key)) if v is not None]
+        values = [(v, buckets[i][0]) for i, v in enumerate(prices[key] if key in prices else series(key)) if v is not None]
         return (max if highest else min)(values) if values else None
     totals = {k: sum(v or 0 for v in kwh(k)) for k in ("pw_solar", "pw_home", "pw_import", "pw_export")}
     return jsonify({
@@ -550,8 +575,7 @@ def history():
         "t": [start for start, _ in buckets],
         "mix": {k: series("mix:" + k) for k in MIX_KEYS + ["battery"]},
         "demand": series("demand"), "net_flow": series("net_flow"), "carbon": series("carbon"),
-        "mip": series("mip"), "mip_min": [c["min"].get("mip", (None,))[0] for c in combined], "mip_max": [c["max"].get("mip", (None,))[0] for c in combined],
-        "ssp": series("ssp"), "agile_import": series("agile_import"), "agile_export": series("agile_export"),
+        **prices, "ssp": series("ssp"),
         "frequency": frequency,
         "home": {k[3:]: kwh(k) for k in ("pw_solar", "pw_home", "pw_import", "pw_export", "pw_batt_in", "pw_batt_out")},
         "temp": series("temp"),
@@ -561,8 +585,9 @@ def history():
             "share": {"wind": share("wind", "lv_wind"), "solar": share("solar"), "gas": share("ccgt", "ocg"), "nuclear": share("nuclear"),
                       "imports": share("imports"), "low_carbon": share("wind", "lv_wind", "solar", "hydro", "nuclear", "biomass")},
             "carbon_avg": average(whole, "carbon"), "carbon_best": best("carbon", False), "carbon_worst": best("carbon", True),
-            "mip_avg": average(whole, "mip"), "mip_cheapest": best("mip", False), "mip_dearest": best("mip", True),
-            "agile_avg": average(whole, "agile_import"),
+            "mip_avg": sum(all_prices["mip"]) / len(all_prices["mip"]) if all_prices["mip"] else None,
+            "mip_cheapest": best("mip", False), "mip_dearest": best("mip", True),
+            "agile_avg": sum(all_prices["agile_import"]) / len(all_prices["agile_import"]) if all_prices["agile_import"] else None,
             "frequency": whole_frequency,
             "home": {k[3:]: v for k, v in totals.items()},
         },
