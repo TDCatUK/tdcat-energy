@@ -31,6 +31,7 @@ cron/launchd on OTTO (every 5 min)
    /changelog    templates/changelog.html  (public, plain-English list of changes)
    /api/demand/recent      last 31 days of NESO half-hourly ND + rooftop solar, stamped with UK local start time
    /api/demand/duck?month= average ND/solar by half-hour for that month, every year since 2010, plus solar records
+   /api/forecast           Agile import/export rates and the national carbon forecast from the current half-hour on
    /api/frequency?hours=   every 15-second frequency reading for the last 0.25–24 h, plus today's low/high/time outside limits
    /api/data     latest row + last 288 rows (≈24 h) + today's Powerwall kWh totals
    /api/config   GET only (public): config.json merged over DEFAULT_CONFIG
@@ -95,6 +96,10 @@ Gotchas: NESO's `datastore_search` breaks when given `fields`, so use `datastore
 ## Grid frequency (15-second readings)
 
 `fetch_frequency()` asks Elexon's frequency stream for everything since the last stored reading (at least the last 12 minutes, at most 7 days), so one request per run brings in every 15-second reading (about 20 per run). They go into `frequency_readings` (`t` = unix seconds UTC, `hz`; `WITHOUT ROWID`, about 21 bytes a reading, ~44 MB a year). While anything before `FREQ_HISTORY_START` (2026-04-23) is missing, each run also back-fills one 7-day chunk (~40k readings, 0.2 s). The newest reading is still stored as `grid_frequency` on the snapshot row. `/api/frequency?hours=` (0.25–24) returns `[t, hz]` pairs plus today's (UK day) min/max with times, seconds outside the admin limits (`frequency.thresh_low/high`) and outside the 49.5–50.5 Hz statutory limits, counting each reading as 15 s. The front end draws it on a linear x axis with Chart.js min-max decimation.
+
+## Agile prices and carbon forecast
+
+`fetch_forecasts()` runs every 30 minutes (`fetch_log` name `forecasts`; `fetch_due(..., 0.4)` so it isn't skipped by a few seconds). It fetches the public Octopus unit rates for `OCT_IMPORT_TARIFF` and `OCT_EXPORT_TARIFF` from the current half-hour on (tomorrow's Agile rates, to 23:00 UK, appear about 16:00) and the national Carbon Intensity `/intensity/{from}/fw48h` forecast. They're upserted into `agile_rates` (`valid_from` PK, `import_p`, `export_p` in p/kWh inc VAT; a missing side never overwrites a stored rate) and `carbon_forecast` (`period_from` PK, `forecast`, `actual`, `index_label`). Both keep history. `/api/forecast` returns everything from the current half-hour on; `script.js` picks the cheapest/most expensive/greenest 6-slot runs itself (`bestWindow`). Carbon colours use the same <100 / <200 g thresholds as the Carbon card.
 
 ## Data sources (endpoints in `.env`)
 

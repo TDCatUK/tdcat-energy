@@ -619,6 +619,51 @@ def fetch_neso_demand(timeout=60):
     return out
 
 
+# === UPCOMING AGILE PRICES AND CARBON FORECAST (every 30 minutes) ===
+FORECAST_TABLES = [
+    "CREATE TABLE IF NOT EXISTS agile_rates (valid_from TEXT PRIMARY KEY, valid_to TEXT, import_p REAL, export_p REAL)",
+    "CREATE TABLE IF NOT EXISTS carbon_forecast (period_from TEXT PRIMARY KEY, forecast REAL, actual REAL, index_label TEXT)",
+]
+
+def fetch_agile_rates(tariff_code, since, timeout=20):
+    """Published half-hourly unit rates (p/kWh inc VAT) from `since` on, as {valid_from: (valid_to, rate)}.
+
+    Octopus publishes the next day's Agile rates (to 23:00 UK time) at about 4pm.
+    """
+    url = f"{OCTOPUS_BASE_URL.rstrip('/')}/products/{tariff_code}/electricity-tariffs/E-1R-{tariff_code}-{OCT_REGION}/standard-unit-rates/"
+    res = requests.get(url, params={'period_from': since.strftime('%Y-%m-%dT%H:%M:%SZ'), 'page_size': 200}, timeout=timeout)
+    res.raise_for_status()
+    return {r['valid_from']: (r.get('valid_to'), float(r['value_inc_vat'])) for r in res.json().get('results', []) if r.get('valid_from')}
+
+def fetch_carbon_forecast(since, timeout=20):
+    """National carbon intensity (gCO2/kWh) for each half-hour of the 48 hours from `since`: (from, forecast, actual, index)."""
+    res = requests.get(f"{CARBON_INTENSITY_URL.rstrip('/')}/{since.strftime('%Y-%m-%dT%H:%MZ')}/fw48h", timeout=timeout)
+    res.raise_for_status()
+    rows = []
+    for r in res.json().get('data', []):
+        intensity = r.get('intensity') or {}
+        rows.append((r['from'].replace('Z', ':00Z'), intensity.get('forecast'), intensity.get('actual'), intensity.get('index')))
+    return rows
+
+def fetch_forecasts(now_utc, timeout=20):
+    """Agile import/export rates and the carbon forecast from the current half-hour on, when due."""
+    out = {'attempted': []}
+    if not fetch_due('forecasts', 0.4): return out  # each half-hour (runs are 5 minutes apart)
+    out['attempted'].append('forecasts')
+    half_hour = now_utc.replace(minute=now_utc.minute // 30 * 30, second=0, microsecond=0)
+    if OCTOPUS_BASE_URL and OCT_IMP_TARIFF:
+        try:
+            imp = fetch_agile_rates(OCT_IMP_TARIFF, half_hour, timeout)
+            exp = fetch_agile_rates(OCT_EXP_TARIFF, half_hour, timeout) if OCT_EXP_TARIFF else {}
+            out['agile'] = [(vf, (imp.get(vf) or exp.get(vf))[0], imp.get(vf, (None, None))[1], exp.get(vf, (None, None))[1])
+                            for vf in sorted(set(imp) | set(exp))]
+        except Exception as e: print(f"Agile rates error: {e}")
+    if CARBON_INTENSITY_URL:
+        try: out['carbon'] = fetch_carbon_forecast(half_hour, timeout)
+        except Exception as e: print(f"Carbon forecast error: {e}")
+    return out
+
+
 LOG_FILE = 'harvester.log'
 LOG_KEEP_DAYS = 90
 
@@ -995,6 +1040,9 @@ def fetch_and_store():
         # === NESO HALF-HOURLY DEMAND (fetched every few hours, not every run) ===
         neso_demand = fetch_neso_demand()
 
+        # === UPCOMING AGILE PRICES AND CARBON FORECAST (every 30 minutes) ===
+        forecasts = fetch_forecasts(now_utc, req_timeout)
+
         # === DATABASE INJECTION ===
         conn = sqlite3.connect('grid_data.db')
         cursor = conn.cursor()
@@ -1052,8 +1100,17 @@ def fetch_and_store():
             cursor.executemany('INSERT INTO duck_profiles VALUES (?, ?, ?, ?, ?, ?)', [(year, *p) for p in profiles])
             cursor.execute('INSERT OR REPLACE INTO duck_records VALUES (?, ?, ?, ?, ?, ?, ?)',
                            (year, best[0] * 100, *best[1:], over) if best else (year, None, None, None, None, None, over))
+        for table in FORECAST_TABLES:
+            cursor.execute(table)
+        # Import and export arrive separately, so a missing one never wipes a stored rate
+        cursor.executemany('''INSERT INTO agile_rates VALUES (?, ?, ?, ?) ON CONFLICT(valid_from) DO UPDATE SET
+            valid_to = excluded.valid_to, import_p = COALESCE(excluded.import_p, import_p), export_p = COALESCE(excluded.export_p, export_p)''',
+            forecasts.get('agile', []))
+        cursor.executemany('''INSERT INTO carbon_forecast VALUES (?, ?, ?, ?) ON CONFLICT(period_from) DO UPDATE SET
+            forecast = excluded.forecast, actual = COALESCE(excluded.actual, actual), index_label = excluded.index_label''',
+            forecasts.get('carbon', []))
         # Log attempts as well as successes, so a failing source is retried after its interval rather than every run
-        cursor.executemany('INSERT OR REPLACE INTO fetch_log VALUES (?, ?)', [(name, now_utc.isoformat()) for name in neso_demand['attempted']])
+        cursor.executemany('INSERT OR REPLACE INTO fetch_log VALUES (?, ?)', [(name, now_utc.isoformat()) for name in neso_demand['attempted'] + forecasts['attempted']])
         conn.commit()
         conn.close()
         print(f"-> Success! Row added.")

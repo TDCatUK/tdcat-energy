@@ -871,6 +871,134 @@ function drawFrequency(d) {
     });
 }
 
+// === Upcoming Agile prices and the carbon forecast ===
+let agileChart, agileFetchedAt = 0;
+
+// Shaded x-ranges behind the data: options.plugins.shadedBands = { bands: [{ from, to, colour, label }] } (category indices)
+const shadedBandsPlugin = {
+    id: 'shadedBands',
+    beforeDatasetsDraw(chart, args, opts) {
+        if (!opts || !opts.bands) return;
+        const { ctx, chartArea, scales } = chart;
+        const step = scales.x.getPixelForValue(1) - scales.x.getPixelForValue(0);
+        ctx.save();
+        opts.bands.forEach(b => {
+            if (b.from == null) return;
+            const left = scales.x.getPixelForValue(b.from) - step / 2, right = scales.x.getPixelForValue(b.to) + step / 2;
+            ctx.globalAlpha = 0.15; ctx.fillStyle = b.colour;
+            ctx.fillRect(left, chartArea.top, right - left, chartArea.bottom - chartArea.top);
+            if (b.label) {
+                const flip = left > (chartArea.left + chartArea.right) / 2;
+                ctx.globalAlpha = 1; ctx.font = "600 10px 'Inter', sans-serif"; ctx.textAlign = flip ? 'right' : 'left';
+                ctx.fillText(b.label, flip ? right - 4 : left + 4, chartArea.top + 10);
+            }
+        });
+        ctx.restore();
+    }
+};
+Chart.register(shadedBandsPlugin);
+
+// The run of `size` consecutive slots with the lowest (or highest) average, ignoring runs with gaps
+function bestWindow(values, size, highest = false) {
+    let best = null;
+    for (let i = 0; i + size <= values.length; i++) {
+        const run = values.slice(i, i + size);
+        if (run.some(v => v == null)) continue;
+        const avg = run.reduce((a, b) => a + b, 0) / size;
+        if (!best || (highest ? avg > best.avg : avg < best.avg)) best = { start: i, end: i + size - 1, avg };
+    }
+    return best;
+}
+
+const slotTime = t => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+const slotDay = t => {
+    const d = new Date(t), now = new Date();
+    const days = Math.round((new Date(d.getFullYear(), d.getMonth(), d.getDate()) - new Date(now.getFullYear(), now.getMonth(), now.getDate())) / 86400000);
+    return days === 0 ? 'Today' : days === 1 ? 'Tomorrow' : d.toLocaleDateString([], { weekday: 'long' });
+};
+
+function loadAgileForecast() {
+    if (!document.getElementById('chartAgile')) return;  // page from before this section existed
+    if (agileChart && Date.now() - agileFetchedAt < 600e3) return;  // prices and forecasts change half-hourly
+    fetch('/api/forecast').then(r => r.ok ? r.json() : null).then(d => {
+        if (d && (d.agile.length || d.carbon.length)) { agileFetchedAt = Date.now(); drawAgileForecast(d); }
+    }).catch(() => {});
+}
+
+function drawAgileForecast(d) {
+    // One slot per half-hour from now to the end of the carbon forecast (48 h) or the published prices, if later
+    const start = Date.parse(d.from), imp = {}, exp = {}, carbon = {}, band = {};
+    d.agile.forEach(r => { imp[Date.parse(r.t)] = r.import; exp[Date.parse(r.t)] = r.export; });
+    d.carbon.forEach(r => { carbon[Date.parse(r.t)] = r.forecast; band[Date.parse(r.t)] = r.index; });
+    const last = Math.max(start, ...Object.keys(imp).map(Number), ...Object.keys(carbon).map(Number));
+    const times = [];
+    for (let t = start; t <= last; t += 1800e3) times.push(t);
+    const importP = times.map(t => imp[t] ?? null), exportP = times.map(t => exp[t] ?? null), carbonG = times.map(t => carbon[t] ?? null);
+
+    const cheap = bestWindow(importP, 6), peak = bestWindow(importP, 6, true), greenest = bestWindow(carbonG, 6);
+    const pick = (values, better) => values.reduce((a, v, i) => v != null && (a < 0 || better(v, values[a])) ? i : a, -1);
+    const iCheapest = pick(importP, (a, b) => a < b), iBestExport = pick(exportP, (a, b) => a > b);
+    const span = w => `${slotTime(times[w.start])}–${slotTime(times[w.end] + 1800e3)}`;
+
+    setNote('agile-cheap3', cheap ? span(cheap) : '---');
+    setNote('agile-cheap3-note', cheap ? `${slotDay(times[cheap.start])}, averaging ${cheap.avg.toFixed(1)}p/kWh` : '');
+    setNote('agile-cheap1', iCheapest >= 0 ? `${importP[iCheapest].toFixed(1)}p` : '---');
+    setNote('agile-cheap1-note', iCheapest >= 0 ? `${slotDay(times[iCheapest])} at ${slotTime(times[iCheapest])}` + (importP[iCheapest] < 0 ? `: you're paid to use power` : '') : '');
+    setNote('agile-green3', greenest ? span(greenest) : '---');
+    setNote('agile-green3-note', greenest ? `${slotDay(times[greenest.start])}, averaging ${Math.round(greenest.avg)} gCO₂/kWh` : '');
+    setNote('agile-peak3', peak ? span(peak) : '---');
+    setNote('agile-peak3-note', peak ? `${slotDay(times[peak.start])}, averaging ${peak.avg.toFixed(1)}p/kWh` +
+        (iBestExport >= 0 ? `. Export peaks at ${exportP[iBestExport].toFixed(1)}p (${slotTime(times[iBestExport])})` : '') : '');
+    const lastPrice = Math.max(...Object.keys(imp).map(Number));
+    setNote('agile-asof', d.agile.length ? `Prices published to ${slotTime(lastPrice + 1800e3)} ${slotDay(lastPrice).toLowerCase()}` : 'No Agile prices yet');
+
+    const lowCol = activeConfig.price?.color_low || '#4ADE80', highCol = activeConfig.price?.color_high || '#EF4444';
+    const octoImp = activeConfig.octopus?.color_imp || activeConfig.theme.octo_pink, octoExp = activeConfig.octopus?.color_exp || activeConfig.theme.octo_pink;
+    const plainBar = `rgba(${hexToRgbChannels(octoImp).replace(/ /g, ',')}, 0.45)`;
+    const inside = (w, i) => w && i >= w.start && i <= w.end;
+    const carbonColour = v => v < 100 ? activeConfig.carbon.low : v < 200 ? activeConfig.carbon.med : activeConfig.carbon.high;
+    const legendItem = (text, fillStyle, strokeStyle = fillStyle, lineDash = []) => ({ text, fillStyle, strokeStyle, lineDash, lineWidth: 2, fontColor: '#D4D4D8' });
+
+    if (agileChart) agileChart.destroy();
+    agileChart = new Chart(document.getElementById('chartAgile').getContext('2d'), {
+        data: {
+            labels: times.map(slotTime),
+            datasets: [
+                { type: 'bar', label: 'Import', data: importP, yAxisID: 'price', order: 2, borderRadius: 2,
+                  backgroundColor: importP.map((v, i) => v != null && v < 0 ? activeConfig.theme.brand_cyan : inside(cheap, i) ? lowCol : inside(peak, i) ? highCol : plainBar) },
+                { type: 'line', label: 'Export', data: exportP, yAxisID: 'price', order: 1, borderColor: octoExp, borderDash: [4, 3], borderWidth: 1.5, pointRadius: 0 },
+                { type: 'line', label: 'Carbon', data: carbonG, yAxisID: 'carbon', order: 0, borderWidth: 2, pointRadius: 0, tension: 0.3,
+                  borderColor: activeConfig.carbon.med, segment: { borderColor: ctx => carbonColour((ctx.p0.parsed.y + ctx.p1.parsed.y) / 2) } }
+            ]
+        },
+        options: {
+            responsive: true, maintainAspectRatio: false, animation: false, interaction: { mode: 'index', intersect: false },
+            plugins: {
+                shadedBands: { bands: greenest ? [{ from: greenest.start, to: greenest.end, colour: activeConfig.carbon.low, label: 'Greenest' }] : [] },
+                legend: { display: true, onClick: () => {}, labels: { color: '#D4D4D8', boxWidth: 18, generateLabels: () => [
+                    legendItem('Import price', plainBar), legendItem('Cheapest 3 hours', lowCol), legendItem('Most expensive 3 hours', highCol),
+                    legendItem('Export price', 'transparent', octoExp, [4, 3]), legendItem('Carbon forecast', 'transparent', activeConfig.carbon.med),
+                    legendItem('Greenest 3 hours', `rgba(${hexToRgbChannels(activeConfig.carbon.low).replace(/ /g, ',')}, 0.25)`)] } },
+                tooltip: { callbacks: {
+                    title: items => `${slotDay(times[items[0].dataIndex])} ${slotTime(times[items[0].dataIndex])}`,
+                    label: ctx => ctx.raw == null ? null : ctx.dataset.yAxisID === 'carbon'
+                        ? `Carbon: ${Math.round(ctx.raw)} gCO₂/kWh${band[times[ctx.dataIndex]] ? ` (${band[times[ctx.dataIndex]]})` : ''}`
+                        : `${ctx.dataset.label}: ${ctx.raw.toFixed(2)}p/kWh` } }
+            },
+            scales: {
+                // A label every 3 hours (6 or 12 on narrower screens), with the day name at midnight
+                x: { grid: { display: false }, ticks: { color: '#A1A1AA', autoSkip: false, maxRotation: 0, callback: function (v, i) {
+                    const t = new Date(times[i]), every = this.chart.width < 450 ? 12 : this.chart.width < 700 ? 6 : 3;
+                    if (t.getMinutes() || t.getHours() % every) return null;
+                    return t.getHours() ? slotTime(times[i]) : t.toLocaleDateString([], { weekday: 'short' });
+                } } },
+                price: { position: 'left', suggestedMin: 0, grid: { color: '#3F3F46' }, ticks: { color: '#A1A1AA', callback: v => `${v}p` } },
+                carbon: { position: 'right', min: 0, grid: { display: false }, ticks: { color: '#A1A1AA', callback: v => `${v} g` } }
+            }
+        }
+    });
+}
+
 // Run a flow line's dots backwards (end to start) or forwards
 function setFlowDirection(idPrefix, reverse) {
     [1, 2].forEach(n => {
@@ -893,6 +1021,7 @@ function updateDashboard() {
         renderDashboardData(gridData);
         renderForecastCharts();
         loadFrequency();
+        loadAgileForecast();
     }).catch(e => console.error("Update failed:", e));
 }
 

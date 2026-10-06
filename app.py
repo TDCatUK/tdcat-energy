@@ -224,8 +224,8 @@ def get_gas(conn, gas_fired_mw):
         "history": [{"time": r['timestamp'], "linepack_mcm": r['linepack_mcm'], "supply_mcmd": r['supply_mcmd'], "demand_mcmd": r['demand_mcmd']} for r in reversed(rows)]
     }
 
-def demand_rows(conn, sql, params=()):
-    """Rows from one of the NESO demand tables, or [] before the harvester has created it."""
+def table_rows(conn, sql, params=()):
+    """Rows from one of the tables the harvester creates itself, or [] before it has created it."""
     try:
         return conn.execute(sql, params).fetchall()
     except sqlite3.OperationalError:
@@ -235,7 +235,7 @@ def demand_rows(conn, sql, params=()):
 def demand_recent():
     """National demand and rooftop solar for each half-hour of the last 31 days, stamped with the UK local start time."""
     conn = get_db_connection()
-    rows = demand_rows(conn, "SELECT * FROM neso_demand_hh WHERE settlement_date >= date('now', '-32 days') ORDER BY settlement_date, settlement_period")
+    rows = table_rows(conn, "SELECT * FROM neso_demand_hh WHERE settlement_date >= date('now', '-32 days') ORDER BY settlement_date, settlement_period")
     conn.close()
     out = []
     for r in rows:
@@ -250,8 +250,8 @@ def demand_duck():
     """Average national demand and rooftop solar through the day for one month, every year on record, plus solar records."""
     month = request.args.get('month', type=int) or datetime.now(LONDON).month
     conn = get_db_connection()
-    profiles = demand_rows(conn, "SELECT * FROM duck_profiles WHERE month = ? ORDER BY year, settlement_period", (month,))
-    records = demand_rows(conn, "SELECT * FROM duck_records ORDER BY year")
+    profiles = table_rows(conn, "SELECT * FROM duck_profiles WHERE month = ? ORDER BY year, settlement_period", (month,))
+    records = table_rows(conn, "SELECT * FROM duck_records ORDER BY year")
     conn.close()
     years = {}
     for r in profiles:
@@ -260,6 +260,21 @@ def demand_duck():
         y["solar"][r['settlement_period'] - 1] = r['embedded_solar']
         y["days"] = max(y["days"], r['days'])
     return jsonify({"month": month, "years": years, "records": [dict(r) for r in records]})
+
+@app.route('/api/forecast')
+def forecast():
+    """Agile import/export rates (p/kWh) and the national carbon intensity forecast, from the current half-hour on."""
+    now = datetime.now(timezone.utc)
+    start = now.replace(minute=now.minute // 30 * 30, second=0, microsecond=0).strftime('%Y-%m-%dT%H:%M:%SZ')
+    conn = get_db_connection()
+    agile = table_rows(conn, 'SELECT valid_from, import_p, export_p FROM agile_rates WHERE valid_from >= ? ORDER BY valid_from', (start,))
+    carbon = table_rows(conn, 'SELECT period_from, forecast, index_label FROM carbon_forecast WHERE period_from >= ? ORDER BY period_from', (start,))
+    conn.close()
+    return jsonify({
+        "from": start,
+        "agile": [{"t": r['valid_from'], "import": r['import_p'], "export": r['export_p']} for r in agile],
+        "carbon": [{"t": r['period_from'], "forecast": r['forecast'], "index": r['index_label']} for r in carbon if r['forecast'] is not None],
+    })
 
 @app.route('/api/frequency')
 def frequency():
