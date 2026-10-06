@@ -21,6 +21,7 @@ __pycache__/
 *.db-shm
 *.BACKUP
 *.log
+*.log.gz
 static/forecast.json
 
 # --- OS ---

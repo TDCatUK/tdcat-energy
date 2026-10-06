@@ -4,6 +4,9 @@ Chart.defaults.color = '#D4D4D8';
 Chart.defaults.font.family = "'Inter', sans-serif"; 
 Chart.defaults.font.size = 13;
 
+// pw_level is the gateway's raw state of charge. The Tesla app hides a 5% reserve, so it shows (raw - 5) / 0.95.
+const appBatteryLevel = (raw) => Math.min(100, Math.max(0, (raw - 5) / 0.95));
+
 const formatGW = (mw) => (mw / 1000).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2});
 
 const fuelInfoText = {
@@ -22,7 +25,7 @@ const fuelInfoText = {
 const interconnectorCaps = {
     "France (ElecLink)": 1.0, "Ireland (EWIC)": 0.5, "France (IFA)": 2.0, "France (IFA2)": 1.0,
     "Ireland (Moyle)": 0.5, "Netherlands (BritNed)": 1.0, "Belgium (Nemo)": 1.0, 
-    "Norway (NSL)": 1.4, "Denmark (Viking)": 1.4
+    "Norway (NSL)": 1.4, "Denmark (Viking)": 1.4, "Ireland (Greenlink)": 0.5
 };
 
 const LEGACY_ICONS = {
@@ -411,7 +414,7 @@ function updateFuelDetailChart() {
     
     const rawData = cachedHistoryData.map(h => {
         const f = h.mix.find(x => x.fuel === currentSelectedFuel);
-        return f ? (f.perc / 100) * (h.demand_mw / 1000) : 0;
+        return f ? f.mw / 1000 : 0;
     });
     const dataArray = smoothData(rawData, 9);
     
@@ -431,9 +434,9 @@ function renderHistoryChart() {
     let datasets = apiFuels.map(fuel => ({
         type: 'line', label: fuel.toUpperCase(),
         data: smoothData(cachedHistoryData.map(h => { 
-            const f = h.mix.find(x => x.fuel === fuel); const perc = f ? f.perc : 0; 
-            const totalSupply = h.total_generation_mw + (h.net_flow_mw > 0 ? h.net_flow_mw : 0);
-            return historyMode === 'GW' ? (perc / 100) * (totalSupply / 1000) : perc; 
+            const f = h.mix.find(x => x.fuel === fuel);
+            if (!f) return 0;
+            return historyMode === 'GW' ? f.mw / 1000 : f.perc; 
         }), 9), 
         backgroundColor: historyColours[fuel], borderColor: 'transparent', fill: true, pointRadius: 0, tension: 0.4, stack: 'generation', order: 1
     }));
@@ -612,7 +615,7 @@ function renderDashboardData(data) {
         solLabel.className = "text-xs text-[#A1A1AA] font-medium mt-1";
     }
     
-    document.getElementById('pw-level').innerText = data.powerwall.level !== null ? data.powerwall.level.toFixed(1) : '---';
+    document.getElementById('pw-level').innerText = data.powerwall.level !== null ? appBatteryLevel(data.powerwall.level).toFixed(1) : '---';
     
     const batW = data.powerwall.battery_w, batLabel = document.getElementById('pw-battery-label');
     if (batW > 20) { batLabel.innerText = `Discharging ${formatPower(batW)} ${powerUnit}`; batLabel.className = "text-xs text-[#A1A1AA] font-medium mt-1"; } 
@@ -703,21 +706,8 @@ function renderDashboardData(data) {
  //   const pshArr = data.history.map(h => h.psh_pumping_mw / 1000);
  //   const statLd = 0.5;
 
-    const transArr = data.history.map(h => h.demand_mw / 1000);
-    
-    // Calculate embedded generation (Solar + LV Wind)
-    const embeddedArr = data.history.map(h => {
-        const solGw = h.solar_mw / 1000;
-        
-        // Find LV Wind in the historical mix array
-        const lvMix = h.mix.find(x => x.fuel === "lv_wind");
-        
-        // The API returns history as percentages, so we convert it back to GW using the total supply
-        const totalSupply = h.total_generation_mw + (h.net_flow_mw > 0 ? h.net_flow_mw : 0);
-        const lvGw = lvMix ? (lvMix.perc / 100) * (totalSupply / 1000) : 0;
-        
-        return solGw + lvGw;
-    });
+    const transArr = data.history.map(h => h.transmission_mw / 1000);
+    const embeddedArr = data.history.map(h => h.embedded_mw / 1000);
 
     const exportArr = data.history.map(h => h.exports_mw / 1000);
     const pshArr = data.history.map(h => h.psh_pumping_mw / 1000);
@@ -733,7 +723,8 @@ function renderDashboardData(data) {
     document.getElementById('brk-psh').innerText = (data.breakdown.psh_pumping_mw / 1000).toFixed(2);
     const nNat = (data.breakdown.transmission_mw / 1000) - (data.breakdown.exports_mw / 1000) - (data.breakdown.psh_pumping_mw / 1000) - statLd;
     document.getElementById('brk-nat').innerText = nNat.toFixed(2);
-    document.getElementById('brk-net').innerText = (nNat + (data.breakdown.embedded_mw / 1000)).toFixed(2);
+    const nNet = nNat + (data.breakdown.embedded_mw / 1000);
+    document.getElementById('brk-net').innerText = nNet.toFixed(2);
     document.getElementById('brk-gro').innerText = ((data.breakdown.transmission_mw / 1000) + (data.breakdown.embedded_mw / 1000)).toFixed(2);
 
     // --- FLOW DIAGRAM & MAP DATA UPDATE ---
@@ -794,7 +785,7 @@ function renderDashboardData(data) {
     const val_hv = (data.total_generation_mw / 1000) - val_wind - val_lv_wind - val_sol;
     const val_tot = (data.total_generation_mw + flow_imp) / 1000;
     const val_psh = (data.breakdown.psh_pumping_mw || 0) / 1000;
-    const val_dem = nNat;
+    const val_dem = nNet;
 
     document.getElementById('svg-val-imp').textContent = val_imp.toFixed(2) + ' GW';
     document.getElementById('svg-val-hv').textContent = Math.max(0, val_hv).toFixed(2) + ' GW';
@@ -939,13 +930,13 @@ function renderDashboardData(data) {
     
     sparkPwLoad = buildSparkline(sparkPwLoad, 'pwLoadSpark', data.history.map(h => h.pw_home_w), timeLabels, '#D4D4D8', 'rgba(212, 212, 216, 0.1)'); 
     sparkPwSolar = buildSparkline(sparkPwSolar, 'pwSolarSpark', data.history.map(h => Math.max(0, h.pw_solar_w)), timeLabels, activeConfig.fuels.solar, `rgba(${hexToRgbChannels(activeConfig.fuels.solar).replace(/ /g, ',')}, 0.1)`, 0, 5000); 
-    sparkPwBatt = buildSparkline(sparkPwBatt, 'pwBattSpark', data.history.map(h => h.pw_level), timeLabels, '#A1A1AA', 'rgba(161, 161, 170, 0.1)', 0, 100);
+    sparkPwBatt = buildSparkline(sparkPwBatt, 'pwBattSpark', data.history.map(h => appBatteryLevel(h.pw_level)), timeLabels, '#A1A1AA', 'rgba(161, 161, 170, 0.1)', 0, 100);
     sparkPwGrid = buildSparkline(sparkPwGrid, 'pwGridSpark', data.history.map(h => h.pw_grid_w), timeLabels, activeConfig.theme.brand_cyan, `rgba(${hexCyanRgb}, 0.1)`);
     
     // Home expanded charts
     chartPwLoad = buildFullChart(chartPwLoad, 'chartPwLoad', data.history.map(h => h.pw_home_w), timeLabels, '#D4D4D8', 'rgba(212, 212, 216, 0.1)', true);
     chartPwSolar = buildFullChart(chartPwSolar, 'chartPwSolar', data.history.map(h => Math.max(0, h.pw_solar_w)), timeLabels, activeConfig.fuels.solar, `rgba(${hexToRgbChannels(activeConfig.fuels.solar).replace(/ /g, ',')}, 0.1)`, true, 0, 5000);
-    chartPwBatt = buildFullChart(chartPwBatt, 'chartPwBatt', data.history.map(h => h.pw_level), timeLabels, '#A1A1AA', 'rgba(161, 161, 170, 0.1)', true, 0, 100);
+    chartPwBatt = buildFullChart(chartPwBatt, 'chartPwBatt', data.history.map(h => appBatteryLevel(h.pw_level)), timeLabels, '#A1A1AA', 'rgba(161, 161, 170, 0.1)', true, 0, 100);
     chartPwGrid = buildFullChart(chartPwGrid, 'chartPwGrid', data.history.map(h => h.pw_grid_w), timeLabels, activeConfig.theme.brand_cyan, `rgba(${hexCyanRgb}, 0.1)`, true);
 
     const cImp = activeConfig.octopus?.color_imp || activeConfig.theme.octo_pink;

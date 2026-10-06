@@ -56,7 +56,7 @@ def get_cloudflare_stats(debug=False):
         "Content-Type": "application/json"
     }
 
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     start = (now - timedelta(days=1)).strftime('%Y-%m-%dT%H:%M:%SZ')
     end = now.strftime('%Y-%m-%dT%H:%M:%SZ')
 
@@ -222,7 +222,7 @@ def fetch_octo_daily(timeout=20):
 
 
 def fetch_and_store():
-    print(f"[{datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')}] Harvesting live data...")
+    print(f"[{datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')}] Harvesting live data...")
 
     try:
         req_timeout = 20

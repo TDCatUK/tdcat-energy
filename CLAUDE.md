@@ -45,7 +45,8 @@ cron/launchd on OTTO (every 5 min)
 | `.env` | API keys, MPAN/MPRN, meter serials, tariff codes, endpoint URLs | **no (secret)** |
 | `.powerwall` | pypowerwall auth cookie cache | **no (secret)** |
 | `grid_data.db` | SQLite, ~48k rows since 2026-04-23, ~45 MB | **no (live data)** |
-| `harvester.log`, `static/forecast.json`, `*.BACKUP`, `grid_data_backup_*.db` | Live output / old backups | **no** |
+| `harvester.log`, `static/forecast.json`, `*.BACKUP`, `grid_data_backup_*.db` | Live output / old backups. `harvester.log` is appended to by the scheduler on OTTO; empty it in place (`: > harvester.log`) right after a run, never delete or replace it. | **no** |
+| `archive/harvester-*.log.gz` | Old harvester logs | **no** |
 | `archive/` | Old one-off and test scripts (DB patchers, early harvester versions, API probes, `setup_db.py` schema seed). Not used by the app. **Never run the fix/patch scripts against the live DB.** | yes |
 | `archive/test_pw.py`, `archive/visitors.py` | Test scripts with hard-coded credentials | **no (secret)** |
 
@@ -64,6 +65,7 @@ Primary key `timestamp` (ISO UTC string `YYYY-MM-DDTHH:MM:SSZ`). Columns were ad
 - `demand_mw` is stored as **ITSDO + PV_Live solar + embedded wind**, not raw ITSDO. `app.py` takes the `Solar` and `LV Wind` mix values back off to get ITSDO (this matches Elexon's ITSDO to within rounding).
 - `total_generation_mw` includes pumped storage as a negative number while pumping. `app.py` ignores this column and recomputes generation from the mix, with pumping clamped out.
 - `day_ahead_price` is N2EX MIDP when it has traded volume (it hasn't for months), else 0. It isn't shown anywhere.
+- `pw_level` is the gateway's **raw** state of charge (in the DB and the API). `script.js` shows the Tesla-app figure, `appBatteryLevel()` = (raw − 5) / 0.95, clamped to 0–100.
 - `oct_yest_*` are totals for the most recent UK day that's **complete on all three meters** (export and gas lag import by about a day), and `oct_yest_date` is that day.
 
 **Demand identity (checked against Elexon 2026-10-06):** ITSDO = INDO + exports + pumped-storage pumping + 500 MW station load. Net = INDO + embedded. Gross = ITSDO + embedded.
@@ -90,7 +92,7 @@ Audit 2026-10-06. Items 1–8 were fixed the same day (see README Changes).
 8. ~~Carbon intensity fell to 0 when `actual` was null~~; it now falls back to `forecast`.
 9. `station_load_mw` is hard-coded to 500 MW (Elexon uses the same constant, so this is right).
 10. `/api/config` POST and `/admin` have no app-level auth; they rely on Cloudflare.
-11. `datetime.utcnow()` deprecation warnings flood `harvester.log` (~7 MB).
+11. ~~`datetime.utcnow()` deprecation warnings flooded `harvester.log`.~~ Fixed 2026-10-06 and the old log archived. The log still grows about 30 KB/day (two lines per run) with no rotation.
 12. The stacked generation (generation + gross imports) sits about one export's worth above the dashed demand line (ITSDO + embedded), so `about.html`'s "over-producing" explanation is a simplification.
 
 ## Testing locally (safe)

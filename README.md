@@ -35,3 +35,9 @@ Secrets live in `.env` and `.powerwall`, which are not committed. See `CLAUDE.md
   - Carbon intensity falls back to the forecast when the actual figure isn't published yet.
   - Greenlink (Ireland) interconnector named properly and counted in the Ireland flow.
   - Demand breakdown label now reads "Embedded (Solar + LV Wind)".
+- **Maths fixes, part 2 (dashboard), live after the Flask restart on OTTO:**
+  - The generation history, single-fuel chart and demand-breakdown chart use the API's MW figures directly, instead of rebuilding them from percentages.
+  - The flow diagram's Demand node is now National + embedded (what GB actually uses), so supply and demand balance.
+  - Greenlink added to the interconnector capacity list (0.5 GW).
+- Battery % now matches the Tesla app: (raw − 5) / 0.95, because the app hides a 5% reserve. The database still stores the raw gateway figure, so history stays consistent.
+- Cleaned up `harvester.log`: fixed the `utcnow()` deprecation warnings at the source, moved the old log (23 Apr – 6 Oct) to `archive/harvester-2026-04-23_to_2026-10-06.log.gz`, and started a fresh log.
