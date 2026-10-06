@@ -2,7 +2,8 @@ import os
 import json
 from flask import Flask, render_template, jsonify, request, send_from_directory
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 # Startup Flask
 app = Flask(__name__)
@@ -84,18 +85,54 @@ def handle_config():
         return jsonify({"status": "success"})
     return jsonify(load_config())
 
+LONDON = ZoneInfo('Europe/London')
+
+# Older rows stored some interconnectors under their raw Elexon code
+INTERCONNECTOR_NAMES = { "INTGRNL": "Ireland (Greenlink)" }
+
+FUEL_KEYS = { "Combined Cycle Gas (CCGT)": "ccgt", "CCGT": "ccgt", "Open Cycle Gas": "ocg", "OCG": "ocg", "Wind": "wind", "LV Wind": "lv_wind", "Solar": "solar", "Hydro": "hydro", "Pumped Storage": "pumped_storage", "Biomass": "biomass", "Nuclear": "nuclear", "Coal": "other", "OIL": "other", "Other": "other" }
+
+def load_flows(raw):
+    flows = json.loads(raw) if raw else []
+    for f in flows:
+        f['name'] = INTERCONNECTOR_NAMES.get(f['name'], f['name'])
+    return flows
+
+def summarise_row(row):
+    """Generation, interconnector and demand figures for one stored snapshot.
+
+    Pumped storage is negative while pumping. That is demand, not generation,
+    so it is clamped out of generation and reported as psh_pumping_mw.
+    """
+    mix = json.loads(row['generation_mix']) if row['generation_mix'] else {}
+    flows = load_flows(row['interconnector_flows'])
+    gen = {label: max(0, mw or 0) for label, mw in mix.items()}
+    total_gen = sum(gen.values())
+    imports = sum(f['flow'] for f in flows if f['flow'] > 0)
+    exports = sum(-f['flow'] for f in flows if f['flow'] < 0)
+    # Solar and LV Wind are embedded (distribution-connected) generation
+    embedded = gen.get('Solar', 0) + gen.get('LV Wind', 0)
+    return {
+        "gen": gen, "flows": flows,
+        "total_gen_mw": total_gen, "imports_mw": imports, "exports_mw": exports,
+        "net_flow_mw": imports - exports, "supply_mw": total_gen + imports,
+        "psh_pumping_mw": max(0, -(mix.get('Pumped Storage', 0) or 0)),
+        "solar_mw": gen.get('Solar', 0), "embedded_mw": embedded,
+    }
+
 @app.route('/api/data')
 def get_data():
     conn = get_db_connection()
-    latest_row = conn.execute('SELECT * FROM energy_snapshots ORDER BY timestamp DESC LIMIT 1').fetchone()
     history_rows = conn.execute('SELECT * FROM energy_snapshots ORDER BY timestamp DESC LIMIT 288').fetchall()
-    
-    today_str = datetime.utcnow().strftime('%Y-%m-%d')
-    today_rows = conn.execute('SELECT timestamp, pw_solar_w, pw_home_w, pw_battery_w, pw_grid_w FROM energy_snapshots WHERE timestamp LIKE ? ORDER BY timestamp ASC', (today_str + '%',)).fetchall()
-        
+
+    # "Today" is the UK day: during BST it starts at 23:00 UTC the previous day
+    uk_midnight = datetime.now(LONDON).replace(hour=0, minute=0, second=0, microsecond=0)
+    day_start = uk_midnight.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+    today_rows = conn.execute('SELECT timestamp, pw_solar_w, pw_home_w, pw_battery_w, pw_grid_w FROM energy_snapshots WHERE timestamp >= ? ORDER BY timestamp ASC', (day_start,)).fetchall()
+
     conn.close()
 
-    if not latest_row: return jsonify({"error": "No data available"}), 404
+    if not history_rows: return jsonify({"error": "No data available"}), 404
 
     cum_solar = cum_home = cum_grid_import = cum_grid_export = cum_batt_dischg = cum_batt_chg = 0.0
 
@@ -108,7 +145,7 @@ def get_data():
 
             w_solar = (today_rows[i-1]['pw_solar_w'] + today_rows[i]['pw_solar_w']) / 2.0
             cum_solar += (w_solar * dt_hours) / 1000.0
-            
+
             w_home = (today_rows[i-1]['pw_home_w'] + today_rows[i]['pw_home_w']) / 2.0
             cum_home += (w_home * dt_hours) / 1000.0
             w_grid = (today_rows[i-1]['pw_grid_w'] + today_rows[i]['pw_grid_w']) / 2.0
@@ -118,87 +155,66 @@ def get_data():
             if w_batt > 0: cum_batt_dischg += (w_batt * dt_hours) / 1000.0
             else: cum_batt_chg += (abs(w_batt) * dt_hours) / 1000.0
 
-    latest = dict(latest_row)
-    mix_col = 'generation_mix' if 'generation_mix' in latest else 'mix'
-    ic_col = 'interconnector_flows' if 'interconnector_flows' in latest else 'interconnectors'
-    
-    raw_generation_mix = json.loads(latest[mix_col]) if latest[mix_col] else {}
-    interconnector_flows = json.loads(latest[ic_col]) if latest[ic_col] else []
-
-    clean_latest_mix = {}
-    for label, mw in raw_generation_mix.items():
-        if label == "Combined Cycle Gas (CCGT)": clean_latest_mix["CCGT"] = mw
-        elif label == "Open Cycle Gas": clean_latest_mix["OCG"] = mw
-        elif label in ["Coal", "OIL"]: 
-            clean_latest_mix["Other"] = clean_latest_mix.get("Other", 0) + mw
-        else: 
-            clean_latest_mix[label] = clean_latest_mix.get(label, 0) + mw
-
+    latest = dict(history_rows[0])
     history_payload, carbon_history = [], []
-    
-    fuel_keys = { "Combined Cycle Gas (CCGT)": "ccgt", "CCGT": "ccgt", "Open Cycle Gas": "ocg", "OCG": "ocg", "Wind": "wind", "LV Wind": "lv_wind", "Solar": "solar", "Hydro": "hydro", "Pumped Storage": "pumped_storage", "Biomass": "biomass", "Nuclear": "nuclear", "Coal": "other", "OIL": "other", "Other": "other" }
-
-    prev_gen, prev_demand = None, None
+    prev = None
 
     for raw_row in reversed(history_rows):
         row = dict(raw_row)
-        r_mix_col = 'generation_mix' if 'generation_mix' in row else 'mix'
-        r_ic_col = 'interconnector_flows' if 'interconnector_flows' in row else 'interconnectors'
-        mix = json.loads(row[r_mix_col]) if row[r_mix_col] else {}
-        flows = json.loads(row[r_ic_col]) if row[r_ic_col] else []
-        
-        total_gen = sum(mix.values())
-        total_imports = sum(f['flow'] for f in flows if f['flow'] > 0)
-        grand_total = total_gen + total_imports
-        
-        clean_gen = row['total_generation_mw'] or 0
-        clean_demand = row['demand_mw'] or 0
-        if clean_gen < 1000 and prev_gen: clean_gen = prev_gen
-        if clean_demand < 1000 and prev_demand: clean_demand = prev_demand
-        prev_gen, prev_demand = clean_gen, clean_demand
+        s = summarise_row(row)
 
-        exports_mw = sum(abs(f['flow']) for f in flows if f['flow'] < 0)
-        psh_mw = mix.get('Pumped Storage', 0)
-        psh_pumping_mw = abs(psh_mw) if psh_mw < 0 else 0
-        solar_mw = mix.get('Solar', 0)
+        # An Elexon timeout leaves a row with only Solar/LV Wind in the mix: reuse the last good supply picture
+        if prev and s['total_gen_mw'] - s['embedded_mw'] < 1000:
+            s = dict(prev)
+        # demand_mw is stored as ITSDO + embedded solar + LV wind, so take the embedded part back off
+        s['transmission_mw'] = (row['demand_mw'] or 0) - s['embedded_mw']
+        if prev and s['transmission_mw'] < 1000: s['transmission_mw'] = prev['transmission_mw']
+        prev = s
 
+        by_fuel = {}
+        for label, mw in s['gen'].items():
+            key = FUEL_KEYS.get(label, "other")
+            by_fuel[key] = by_fuel.get(key, 0) + mw
+        if s['imports_mw'] > 0: by_fuel["imports"] = s['imports_mw']
         mix_array = []
-        if grand_total > 0:
-            for label, mw in mix.items():
-                simple_key = fuel_keys.get(label, "other")
-                existing = next((item for item in mix_array if item["fuel"] == simple_key), None)
-                if existing: existing["perc"] += (mw / grand_total) * 100
-                else: mix_array.append({"fuel": simple_key, "perc": (mw / grand_total) * 100})
-            if total_imports > 0: mix_array.append({"fuel": "imports", "perc": (total_imports / grand_total) * 100})
+        if s['supply_mw'] > 0:
+            mix_array = [{"fuel": fuel, "mw": mw, "perc": (mw / s['supply_mw']) * 100} for fuel, mw in by_fuel.items()]
 
         history_payload.append({
-            "time": row['timestamp'], 
-            "demand_mw": clean_demand, 
-            "total_generation_mw": clean_gen,
-            "net_flow_mw": row['net_flow_mw'] or 0, 
-            "wholesale_price": row['wholesale_price'] or 0, 
+            "time": row['timestamp'],
+            "demand_mw": s['transmission_mw'] + s['embedded_mw'],
+            "transmission_mw": s['transmission_mw'],
+            "embedded_mw": s['embedded_mw'],
+            "total_generation_mw": s['total_gen_mw'],
+            "supply_mw": s['supply_mw'],
+            "net_flow_mw": s['net_flow_mw'],
+            "wholesale_price": row['wholesale_price'] or 0,
             "day_ahead_price": row['day_ahead_price'] or 0,
             "market_index_price": row.get('market_index_price', 0) or 0,
             "grid_frequency": row.get('grid_frequency', 50.0) or 50.0,
             "net_imbalance_volume": row.get('net_imbalance_volume', 0) or 0,
             "mix": mix_array,
-            "pw_solar_w": row['pw_solar_w'] or 0, 
+            "pw_solar_w": row['pw_solar_w'] or 0,
             "pw_home_w": row['pw_home_w'] or 0,
-            "pw_grid_w": row['pw_grid_w'] or 0, 
-            "pw_battery_w": row['pw_battery_w'] or 0, 
+            "pw_grid_w": row['pw_grid_w'] or 0,
+            "pw_battery_w": row['pw_battery_w'] or 0,
             "pw_level": row['pw_level'] or 0,
-            "oct_import_pence": row['oct_import_pence'] or 0, 
+            "oct_import_pence": row['oct_import_pence'] or 0,
             "oct_export_pence": row['oct_export_pence'] or 0,
-            "exports_mw": exports_mw, 
-            "psh_pumping_mw": psh_pumping_mw, 
-            "solar_mw": solar_mw
+            "exports_mw": s['exports_mw'],
+            "psh_pumping_mw": s['psh_pumping_mw'],
+            "solar_mw": s['solar_mw']
         })
         carbon_history.append({"time": row['timestamp'], "intensity": row['carbon_intensity'] or 0})
 
-    l_exports_mw = sum(abs(f['flow']) for f in interconnector_flows if f['flow'] < 0)
-    l_psh_mw = raw_generation_mix.get('Pumped Storage', 0)
-    l_psh_pumping_mw = abs(l_psh_mw) if l_psh_mw < 0 else 0
-    l_solar_mw = raw_generation_mix.get('Solar', 0)
+    latest_s = prev
+    clean_latest_mix = {}
+    for label, mw in latest_s['gen'].items():
+        if label == "Combined Cycle Gas (CCGT)": name = "CCGT"
+        elif label == "Open Cycle Gas": name = "OCG"
+        elif label in ["Coal", "OIL"]: name = "Other"
+        else: name = label
+        clean_latest_mix[name] = clean_latest_mix.get(name, 0) + mw
 
     yest_gas_m3 = latest.get('oct_yest_gas', 0)
 
@@ -212,53 +228,53 @@ def get_data():
 
 
     response_data = {
-        "demand_mw": latest['demand_mw'] or 0, 
-        "total_generation_mw": latest['total_generation_mw'] or 0,
-        "net_flow_mw": latest['net_flow_mw'] or 0, 
+        "demand_mw": latest_s['transmission_mw'] + latest_s['embedded_mw'],
+        "total_generation_mw": latest_s['total_gen_mw'],
+        "net_flow_mw": latest_s['net_flow_mw'],
         "wholesale_price": latest['wholesale_price'] or 0,
         "day_ahead_price": latest['day_ahead_price'] or 0,
         "market_index_price": latest.get('market_index_price', 0) or 0,
         "grid_frequency": latest.get('grid_frequency', 50.0) or 50.0,
         "net_imbalance_volume": latest.get('net_imbalance_volume', 0) or 0,
-        "carbon_intensity": latest['carbon_intensity'] or 0, 
+        "carbon_intensity": latest['carbon_intensity'] or 0,
         "generation_mix": clean_latest_mix,
-        "interconnector_flows": interconnector_flows,
+        "interconnector_flows": latest_s['flows'],
         "breakdown": {
-            "transmission_mw": latest['demand_mw'] or 0, 
-            "embedded_mw": l_solar_mw + (latest.get('embedded_wind_mw', 0) or 0),
-            "exports_mw": l_exports_mw,
-            "psh_pumping_mw": l_psh_pumping_mw, 
+            "transmission_mw": latest_s['transmission_mw'],
+            "embedded_mw": latest_s['embedded_mw'],
+            "exports_mw": latest_s['exports_mw'],
+            "psh_pumping_mw": latest_s['psh_pumping_mw'],
             "station_load_mw": 500
         },
 
         "powerwall": {
-            "solar_w": latest['pw_solar_w'] or 0, 
+            "solar_w": latest['pw_solar_w'] or 0,
             "home_w": latest['pw_home_w'] or 0,
-            "grid_w": latest['pw_grid_w'] or 0, 
-            "battery_w": latest['pw_battery_w'] or 0, 
-            "level": latest['pw_level'] or 0, 
+            "grid_w": latest['pw_grid_w'] or 0,
+            "battery_w": latest['pw_battery_w'] or 0,
+            "level": latest['pw_level'] or 0,
             "grid_status": latest['pw_grid_status'] or 'UP',
-            "cum_solar_kwh": cum_solar, 
+            "cum_solar_kwh": cum_solar,
             "cum_home_kwh": cum_home,
-            "cum_grid_import_kwh": cum_grid_import, 
+            "cum_grid_import_kwh": cum_grid_import,
             "cum_grid_export_kwh": cum_grid_export,
-            "cum_batt_dischg_kwh": cum_batt_dischg, 
+            "cum_batt_dischg_kwh": cum_batt_dischg,
             "cum_batt_chg_kwh": cum_batt_chg
         },
         "weather": {
             "status": weather_status,
-            "temp_c": latest['temp_c'] or 0, 
+            "temp_c": latest['temp_c'] or 0,
             "wind_mph": latest['wind_mph'] or 0,
-            "daylight_secs": latest['daylight_secs'] or 0, 
+            "daylight_secs": latest['daylight_secs'] or 0,
             "cloud_cover": latest['cloud_cover'] or 0
         },
         "octopus": {
-            "import_pence": latest['oct_import_pence'] or 0, 
+            "import_pence": latest['oct_import_pence'] or 0,
             "export_pence": latest['oct_export_pence'] or 0,
-            "yest_import_kwh": latest['oct_yest_import'] or 0, 
+            "yest_import_kwh": latest['oct_yest_import'] or 0,
             "yest_export_kwh": latest['oct_yest_export'] or 0,
-            "yest_gas_m3": yest_gas_m3, 
-            "yest_gas_kwh": yest_gas_m3 * 11.222, 
+            "yest_gas_m3": yest_gas_m3,
+            "yest_gas_kwh": yest_gas_m3 * 11.222,
             "yest_date": latest['oct_yest_date'] or ''
         },
         "cloudflare": {
@@ -266,7 +282,7 @@ def get_data():
             "requests": latest.get('cf_requests_24h', 0),
             "bytes": latest.get('cf_bytes_24h', 0)
         },
-        "history": history_payload, 
+        "history": history_payload,
         "carbon_history": carbon_history
     }
     return jsonify(response_data)

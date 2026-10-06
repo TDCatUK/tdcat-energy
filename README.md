@@ -26,3 +26,12 @@ Secrets live in `.env` and `.powerwall`, which are not committed. See `CLAUDE.md
 - Added this README and `CLAUDE.md` (handover notes).
 - Octopus data is working again with the new API key (it had been 0 since 30 Sep, 16:55 UTC). Confirmed on the 12:00 UTC harvester run.
 - Moved old one-off and test scripts into `archive/`. The two with hard-coded credentials stay there but aren't committed.
+- **Maths fixes, part 1 (harvester and API):**
+  - Demand breakdown: "Transmission" now really is ITSDO. Solar and LV wind were being counted twice, which made Transmission, National, Net and Gross about 6 GW too high around midday. Checked against Elexon's own ITSDO and INDO.
+  - Generation mix: pumped storage while pumping no longer shows as a negative share or reduces total generation. Mix percentages always add up to 100%, and charts now use MW values directly.
+  - Home "today" totals start at UK midnight, not UTC midnight (BST was missing the first hour).
+  - Octopus daily figures cover one whole UK day that's complete on all three meters, so the date label is true for import, export and gas.
+  - Market index price no longer drops to £0 just after midnight, and zero-volume placeholder prices are ignored.
+  - Carbon intensity falls back to the forecast when the actual figure isn't published yet.
+  - Greenlink (Ireland) interconnector named properly and counted in the Ireland flow.
+  - Demand breakdown label now reads "Embedded (Solar + LV Wind)".

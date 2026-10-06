@@ -60,27 +60,38 @@ Primary key `timestamp` (ISO UTC string `YYYY-MM-DDTHH:MM:SSZ`). Columns were ad
 - Octopus: `oct_import_pence`, `oct_export_pence` (p/kWh inc VAT), `oct_yest_import`, `oct_yest_export` (kWh), `oct_yest_gas` (m³), `oct_yest_date`
 - Cloudflare: `cf_visits_24h`, `cf_requests_24h`, `cf_bytes_24h`
 
-**Important:** `demand_mw` is stored as **ITSDO + PV_Live solar + embedded wind**, not raw ITSDO.
+**Stored-value quirks (don't change these without migrating history):**
+- `demand_mw` is stored as **ITSDO + PV_Live solar + embedded wind**, not raw ITSDO. `app.py` takes the `Solar` and `LV Wind` mix values back off to get ITSDO (this matches Elexon's ITSDO to within rounding).
+- `total_generation_mw` includes pumped storage as a negative number while pumping. `app.py` ignores this column and recomputes generation from the mix, with pumping clamped out.
+- `day_ahead_price` is N2EX MIDP when it has traded volume (it hasn't for months), else 0. It isn't shown anywhere.
+- `oct_yest_*` are totals for the most recent UK day that's **complete on all three meters** (export and gas lag import by about a day), and `oct_yest_date` is that day.
+
+**Demand identity (checked against Elexon 2026-10-06):** ITSDO = INDO + exports + pumped-storage pumping + 500 MW station load. Net = INDO + embedded. Gross = ITSDO + embedded.
 
 ## Data sources (endpoints in `.env`)
 
 Elexon BMRS: FUELINST (mix + interconnectors), ITSDO (demand), system-prices (SSP + NIV), market-index (APXMIDP / N2EXMIDP), frequency stream. NESO datastore resource `db6c038f-…` (embedded wind forecast). PV_Live `gsp/0` (national solar). Carbon Intensity `/intensity`. Octopus v1 (Agile import/export unit rates, consumption). Open-Meteo forecast (mph, Europe/London).
 
-## Known issues (audit 2026-10-06)
+## API contract between `app.py` and `script.js`
 
-See README "Changes" for what has since been fixed.
+Each `/api/data` history row carries `transmission_mw` (ITSDO), `embedded_mw` (solar + LV wind), `supply_mw` (generation + gross imports) and `mix: [{fuel, mw, perc}]`, where `perc` is the share of `supply_mw`. `script.js` reads these directly. **Deploy order matters:** Flask on OTTO only picks up `app.py` changes after a restart, while static files go live at once. So when the API shape changes, restart Flask before deploying `script.js` that depends on the new fields.
 
-1. ~~Octopus API key rejected (401) from 2026-09-30 16:55 UTC.~~ **Resolved 2026-10-06:** the owner regenerated the key in `.env`; the first good row was 12:00 UTC. Octopus fields are 0 for the gap.
-2. **Embedded generation double-counted in the demand breakdown.** `demand_mw` already includes solar and LV wind, but `script.js` treats it as pure ITSDO ("Transmission") and adds embedded again for Net and Gross. "National" is inflated by embedded too.
-3. **"Day-ahead price" is N2EX MIDP**, which is usually 0 (no volume). It isn't a day-ahead price.
-4. **Mix percentages:** in `app.py` the denominator includes negative pumped storage (pumping) and the fuel gets a negative %. The history chart and fuel-detail chart then rebuild GW from % using different totals (total supply vs `demand_mw`).
-5. **Powerwall "today" kWh** uses the UTC date, not the UK local day (off by an hour during BST). Gaps over 1 h are counted as 5 minutes.
-6. **Octopus "yesterday"** sums the latest 48 half-hours returned, which can span two days, and labels them with the latest slot's date.
-7. **Unmapped interconnector** `INTGRNL` (Greenlink, Ireland) shows as a raw code and is left out of the Ireland map flow and capacity list. Interconnector capacities are hard-coded in `script.js`.
-8. **Carbon intensity** uses `actual`, which is often null for the current half-hour; it falls back to 0, then the front end forward-fills.
-9. `station_load_mw` is hard-coded to 500 MW.
+## Known issues
+
+Audit 2026-10-06. Items 1–8 were fixed the same day (see README Changes).
+
+1. ~~Octopus API key rejected (401) from 2026-09-30 16:55 UTC.~~ Owner regenerated the key. Octopus fields are 0 for the gap.
+2. ~~Embedded generation double-counted in the demand breakdown.~~
+3. ~~MIDP fell to £0 after UTC midnight / zero-volume prices.~~ The "day-ahead" column remains effectively unused.
+4. ~~Mix percentages included negative pumped storage; charts rebuilt GW from % with mismatched totals.~~
+5. ~~Powerwall "today" kWh used the UTC day.~~ Gaps over 1 h still count as 5 minutes (deliberately unchanged).
+6. ~~Octopus "yesterday" summed the latest 48 half-hours.~~ Octopus sometimes zero-fills missing half-hours (e.g. import on 04 Oct 2026 = 0.03 kWh), which can't be fixed this side.
+7. ~~Greenlink (`INTGRNL`) unmapped.~~ Interconnector capacities are still hard-coded in `script.js`.
+8. ~~Carbon intensity fell to 0 when `actual` was null~~; it now falls back to `forecast`.
+9. `station_load_mw` is hard-coded to 500 MW (Elexon uses the same constant, so this is right).
 10. `/api/config` POST and `/admin` have no app-level auth; they rely on Cloudflare.
 11. `datetime.utcnow()` deprecation warnings flood `harvester.log` (~7 MB).
+12. The stacked generation (generation + gross imports) sits about one export's worth above the dashed demand line (ITSDO + embedded), so `about.html`'s "over-producing" explanation is a simplification.
 
 ## Testing locally (safe)
 

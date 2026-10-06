@@ -2,7 +2,8 @@ import os
 import requests
 import sqlite3
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, time
+from zoneinfo import ZoneInfo
 import pypowerwall
 from dotenv import load_dotenv
 
@@ -38,6 +39,8 @@ NESO_EMBEDDED_URL = os.getenv("NESO_EMBEDDED_URL")
 CLOUDFLARE_API_TOKEN = os.getenv("CLOUDFLARE_API_TOKEN")
 CLOUDFLARE_ZONE_ID = os.getenv("CLOUDFLARE_ZONE_ID")
 HOSTNAME = "energy.tdcat.com"
+
+LONDON = ZoneInfo("Europe/London")
 
 
 def get_cloudflare_stats(debug=False):
@@ -168,18 +171,54 @@ def fetch_octo_rate(tariff_code, now_utc, timeout=20):
 
     return 0.0
 
-def fetch_octo_consumption(meter_id, serial, meter_type="electricity", timeout=20):
-    if not OCTOPUS_BASE_URL or not meter_id or not serial: return 0, ""
+def fetch_octo_day_totals(meter_id, serial, meter_type, start, end, timeout=20):
+    """Consumption between start and end, summed per UK day: {date: (total, half_hours)}."""
     url = f"{OCTOPUS_BASE_URL.rstrip('/')}/{meter_type}-meter-points/{meter_id}/meters/{serial}/consumption/"
-    try:
-        res = requests.get(url, auth=(OCT_KEY, ''), params={'page_size': 48}, timeout=timeout).json()
-        if 'results' in res and len(res['results']) > 0:
-            total = sum(item['consumption'] for item in res['results'])
-            raw_date = res['results'][0]['interval_start'][:10]
-            parsed_date = datetime.strptime(raw_date, '%Y-%m-%d')
-            return total, parsed_date.strftime('%d %b')
-    except: pass
-    return 0, ""
+    res = requests.get(url, auth=(OCT_KEY, ''), params={
+        'period_from': start.strftime('%Y-%m-%dT%H:%M:%SZ'),
+        'period_to': end.strftime('%Y-%m-%dT%H:%M:%SZ'),
+        'page_size': 500
+    }, timeout=timeout).json()
+    days = {}
+    for item in res.get('results', []):
+        day = datetime.fromisoformat(item['interval_start'].replace('Z', '+00:00')).astimezone(LONDON).date()
+        total, slots = days.get(day, (0, 0))
+        days[day] = (total + item['consumption'], slots + 1)
+    return days
+
+def fetch_octo_daily(timeout=20):
+    """Import, export and gas totals for the most recent UK day that's complete on every meter.
+
+    Export and gas readings usually reach Octopus a day after import, so this is often two days ago.
+    One shared day keeps the single date label on the dashboard true for all three figures.
+    """
+    if not OCTOPUS_BASE_URL: return 0, 0, 0, ""
+    today = datetime.now(LONDON).date()
+    uk_midnight = lambda d: datetime.combine(d, time.min, LONDON).astimezone(timezone.utc)
+    meters = [(OCT_IMP_MPAN, OCT_SERIAL, "electricity"), (OCT_EXP_MPAN, OCT_SERIAL, "electricity"), (OCT_GAS_MPRN, OCT_GAS_SERIAL, "gas")]
+    per_meter = []
+    for meter_id, serial, meter_type in meters:
+        if not meter_id or not serial:
+            per_meter.append(None)
+            continue
+        try:
+            per_meter.append(fetch_octo_day_totals(meter_id, serial, meter_type, uk_midnight(today - timedelta(days=3)), uk_midnight(today), timeout))
+        except Exception as e:
+            print(f"Octopus consumption error ({meter_type} {meter_id[-4:]}): {e}")
+            per_meter.append({})
+
+    def complete(days, day):
+        expected = int((uk_midnight(day + timedelta(days=1)) - uk_midnight(day)).total_seconds() // 1800)  # 46 / 48 / 50
+        return days.get(day, (0, 0))[1] >= expected
+
+    candidates = [today - timedelta(days=n) for n in (1, 2, 3)]
+    chosen = next((d for d in candidates if all(m is None or complete(m, d) for m in per_meter)), None)
+    if chosen is None:
+        # A meter has stopped reporting: fall back to the latest day with complete import data
+        chosen = next((d for d in candidates if per_meter[0] and complete(per_meter[0], d)), None)
+    if chosen is None: return 0, 0, 0, ""
+    imp, exp, gas = (m.get(chosen, (0, 0))[0] if m else 0 for m in per_meter)
+    return imp, exp, gas, chosen.strftime('%d %b')
 
 
 def fetch_and_store():
@@ -263,10 +302,7 @@ def fetch_and_store():
         # === OCTOPUS API ===
         oct_imp_pence = fetch_octo_rate(OCT_IMP_TARIFF, now_utc, req_timeout)
         oct_exp_pence = fetch_octo_rate(OCT_EXP_TARIFF, now_utc, req_timeout)
-        oct_yest_imp, oct_date_imp = fetch_octo_consumption(OCT_IMP_MPAN, OCT_SERIAL, "electricity", req_timeout)
-        oct_yest_exp, _ = fetch_octo_consumption(OCT_EXP_MPAN, OCT_SERIAL, "electricity", req_timeout)
-        oct_yest_gas, oct_date_gas = fetch_octo_consumption(OCT_GAS_MPRN, OCT_GAS_SERIAL, "gas", req_timeout)
-        oct_final_date = oct_date_imp if oct_date_imp else oct_date_gas
+        oct_yest_imp, oct_yest_exp, oct_yest_gas, oct_final_date = fetch_octo_daily(req_timeout)
 
 
         # === WEATHER API ===
@@ -324,8 +360,9 @@ def fetch_and_store():
         # === CARBON API ===
         try:
             ci_res = requests.get(CARBON_INTENSITY_URL, timeout=req_timeout).json() if CARBON_INTENSITY_URL else {}
-            carbon_intensity = ci_res.get('data', [{}])[0].get('intensity', {}).get('actual', 0)
-            if carbon_intensity is None: carbon_intensity = 0
+            intensity = ci_res.get('data', [{}])[0].get('intensity', {})
+            carbon_intensity = intensity.get('actual')
+            if carbon_intensity is None: carbon_intensity = intensity.get('forecast') or 0
         except: carbon_intensity = 0
 
 
@@ -420,7 +457,7 @@ def fetch_and_store():
                 current_mix = [item for item in gen_res['data'] if item['publishTime'] == latest_time]
 
                 fuel_mapping = {"CCGT": "Combined Cycle Gas (CCGT)", "WIND": "Wind", "NUCLEAR": "Nuclear", "BIOMASS": "Biomass", "COAL": "Coal", "NPSHYD": "Hydro", "PS": "Pumped Storage", "OCGT": "Open Cycle Gas", "OTHER": "Other"}
-                interconnector_mapping = {"INTFR": "France (IFA)", "INTIFA2": "France (IFA2)", "INTELEC": "France (ElecLink)", "INTNED": "Netherlands (BritNed)", "INTIRL": "Ireland (Moyle)", "INTEW": "Ireland (EWIC)", "INTNEM": "Belgium (Nemo)", "INTNSL": "Norway (NSL)", "INTVKL": "Denmark (Viking)"}
+                interconnector_mapping = {"INTFR": "France (IFA)", "INTIFA2": "France (IFA2)", "INTELEC": "France (ElecLink)", "INTNED": "Netherlands (BritNed)", "INTIRL": "Ireland (Moyle)", "INTEW": "Ireland (EWIC)", "INTNEM": "Belgium (Nemo)", "INTNSL": "Norway (NSL)", "INTVKL": "Denmark (Viking)", "INTGRNL": "Ireland (Greenlink)"}
 
                 for item in current_mix:
                     fuel_code = item['fuelType']
@@ -465,10 +502,11 @@ def fetch_and_store():
         latest_market_index_price = 0.0
         try:
             if ELEXON_MARKET_INDEX_URL:
-                start_of_day = now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
+                # Look back 6 h so there's always a published period, even just after midnight
+                window_start = now_utc - timedelta(hours=6)
                 end_time = (now_utc + timedelta(hours=3)).strftime('%Y-%m-%dT%H:%M:%SZ')
                 res = requests.get(ELEXON_MARKET_INDEX_URL, params={
-                    'from': start_of_day.strftime('%Y-%m-%dT%H:%M:%SZ'),
+                    'from': window_start.strftime('%Y-%m-%dT%H:%M:%SZ'),
                     'to': end_time,
                 }, timeout=req_timeout)
 
@@ -478,7 +516,8 @@ def fetch_and_store():
                         data.sort(key=lambda x: x.get('startTime', ''), reverse=True)
                         now_str = now_utc.strftime('%Y-%m-%dT%H:%M:%SZ')
                         
-                        current_period_data = [item for item in data if item.get('startTime', '') <= now_str][:6]
+                        # A price with zero traded volume is a placeholder 0, not a real price
+                        current_period_data = [item for item in data if item.get('startTime', '') <= now_str and (item.get('volume') or 0) > 0]
 
                         # Use None instead of 0.0 to allow negative and zero prices
                         apx_price = None
@@ -499,7 +538,8 @@ def fetch_and_store():
 
                         # Fallback logic that respects negative numbers
                         latest_market_index_price = apx_price if apx_price is not None else (n2ex_price if n2ex_price is not None else 0.0)
-                        latest_day_ahead_price = n2ex_price if n2ex_price is not None else (apx_price if apx_price is not None else 0.0)
+                        # N2EX has had no volume for months, so this is usually 0. Not shown on the dashboard.
+                        latest_day_ahead_price = n2ex_price if n2ex_price is not None else 0.0
                         
         except Exception as e:
             print(f"Pricing error: {e}")
