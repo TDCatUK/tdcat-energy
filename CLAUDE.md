@@ -60,7 +60,7 @@ Primary key `timestamp` (ISO UTC string `YYYY-MM-DDTHH:MM:SSZ`). Columns were ad
 - Weather: `temp_c`, `wind_mph`, `daylight_secs`, `cloud_cover`
 - Octopus: `oct_import_pence`, `oct_export_pence` (p/kWh inc VAT), `oct_yest_import`, `oct_yest_export` (kWh), `oct_yest_gas` (m³), `oct_yest_date`
 - Cloudflare: `cf_visits_24h`, `cf_requests_24h`, `cf_bytes_24h`
-- Grid batteries (unofficial estimate, added 2026-10-06, NULL before then): `bess_discharge_mw`, `bess_charge_mw`, both positive
+- Grid batteries (unofficial estimate): `bess_discharge_mw`, `bess_charge_mw`, both positive. Collected live from 2026-10-06 14:20 UTC and backfilled from 2026-10-05 14:35 UTC; NULL before that. To backfill more, fetch PN/BOALF in chunks with `fetch_battery_segments()` and compute each row with `battery_flow_at()`, the same function the live run uses. Run it against a backup first.
 
 **Stored-value quirks (don't change these without migrating history):**
 - `demand_mw` is stored as **ITSDO + PV_Live solar + embedded wind**, not raw ITSDO. `app.py` takes the `Solar` and `LV Wind` mix values back off to get ITSDO (this matches Elexon's ITSDO to within rounding).

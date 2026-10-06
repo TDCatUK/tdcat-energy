@@ -1248,7 +1248,7 @@ function renderBatteryPanel(data, timeLabels) {
         options: {
             responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
             plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => ctx.raw === null ? 'No estimate' : `${ctx.raw >= 0 ? 'Discharging' : 'Charging'} ${Math.abs(ctx.raw).toFixed(2)} GW (net)` } } },
-            scales: { x: { grid: { display: false }, ticks: { color: '#A1A1AA', maxTicksLimit: 8 } }, y: { suggestedMin: 0, suggestedMax: 0, grid: { color: '#3F3F46' }, ticks: { color: '#A1A1AA', callback: v => v + ' GW' } } }
+            scales: { x: { grid: { display: false }, ticks: { color: '#A1A1AA', maxTicksLimit: 8 } }, y: { suggestedMin: 0, suggestedMax: 0, grid: { color: '#3F3F46' }, ticks: { color: '#A1A1AA', callback: v => `${+v.toFixed(2)} GW` } } }
         }
     });
 }

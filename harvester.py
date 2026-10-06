@@ -261,6 +261,35 @@ def level_at(segment, t):
     span = (t1 - t0).total_seconds()
     return segment['levelFrom'] + ((t - t0).total_seconds() / span if span else 0) * (segment['levelTo'] - segment['levelFrom'])
 
+# Acceptances last up to about an hour, so 90 minutes of history covers any still in force
+BOALF_LOOKBACK = timedelta(minutes=90)
+
+def fetch_battery_segments(dataset, start, end, units, timeout=20):
+    """PN or BOALF segments for the given battery units between start and end."""
+    iso = lambda t: t.strftime('%Y-%m-%dT%H:%M:%SZ')
+    params = [('from', iso(start)), ('to', iso(end))] + [('bmUnit', u) for u in units]
+    res = requests.get(f"{ELEXON_API}/datasets/{dataset}/stream", params=params, timeout=timeout)
+    res.raise_for_status()
+    data = res.json()
+    return data if isinstance(data, list) else data.get('data', [])
+
+def battery_flow_at(t, pn_segments, boalf_segments):
+    """(discharging MW, charging MW) at time t: each unit's PN level, replaced by its latest acceptance in force."""
+    levels = {}
+    for seg in pn_segments:
+        mw = level_at(seg, t)
+        if mw is not None: levels[seg['bmUnit']] = mw
+    accepted = {}
+    for seg in boalf_segments:
+        mw = level_at(seg, t)
+        key = (seg.get('acceptanceTime') or '', seg.get('acceptanceNumber') or 0)
+        if mw is not None and (seg['bmUnit'] not in accepted or key > accepted[seg['bmUnit']][0]):
+            accepted[seg['bmUnit']] = (key, mw)
+    levels.update({unit: mw for unit, (_, mw) in accepted.items()})
+    if not levels: return None, None
+    return (round(sum(mw for mw in levels.values() if mw > 0)),
+            round(sum(-mw for mw in levels.values() if mw < 0)))
+
 def fetch_battery_flow(now_utc, timeout=20):
     """Unofficial estimate of GB grid-battery flow now: (discharging MW, charging MW).
 
@@ -270,29 +299,10 @@ def fetch_battery_flow(now_utc, timeout=20):
     """
     units = load_battery_units(timeout)
     if not units: return None, None
-    iso = lambda t: t.strftime('%Y-%m-%dT%H:%M:%SZ')
-    def stream(dataset, lookback):
-        params = [('from', iso(now_utc - lookback)), ('to', iso(now_utc + timedelta(minutes=1)))] + [('bmUnit', u) for u in units]
-        res = requests.get(f"{ELEXON_API}/datasets/{dataset}/stream", params=params, timeout=timeout)
-        res.raise_for_status()
-        data = res.json()
-        return data if isinstance(data, list) else data.get('data', [])
     try:
-        levels = {}
-        for seg in stream('PN', timedelta(minutes=1)):
-            mw = level_at(seg, now_utc)
-            if mw is not None: levels[seg['bmUnit']] = mw
-        # Acceptances last up to about an hour, so 90 minutes of history covers any still in force
-        accepted = {}
-        for seg in stream('BOALF', timedelta(minutes=90)):
-            mw = level_at(seg, now_utc)
-            key = (seg.get('acceptanceTime') or '', seg.get('acceptanceNumber') or 0)
-            if mw is not None and (seg['bmUnit'] not in accepted or key > accepted[seg['bmUnit']][0]):
-                accepted[seg['bmUnit']] = (key, mw)
-        levels.update({unit: mw for unit, (_, mw) in accepted.items()})
-        if not levels: return None, None
-        return (round(sum(mw for mw in levels.values() if mw > 0)),
-                round(sum(-mw for mw in levels.values() if mw < 0)))
+        pn = fetch_battery_segments('PN', now_utc - timedelta(minutes=1), now_utc + timedelta(minutes=1), units, timeout)
+        boalf = fetch_battery_segments('BOALF', now_utc - BOALF_LOOKBACK, now_utc + timedelta(minutes=1), units, timeout)
+        return battery_flow_at(now_utc, pn, boalf)
     except Exception as e:
         print(f"Battery estimate error: {e}")
         return None, None
