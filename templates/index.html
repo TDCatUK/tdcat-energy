@@ -1,0 +1,547 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    
+    <title>Live UK Grid | energy.tdcat.com</title>
+    <meta name="description" content="A real-time UK electricity grid dashboard. Track national demand, solar generation, wholesale prices, grid frequency and Octopus Agile Rates live.">
+    <meta name="twitter:title" content="Live UK Grid | energy.tdcat.com">
+    <meta name="twitter:description" content="A real-time UK electricity grid dashboard. Track national demand, solar generation, and wholesale prices , grid frequency and Octopus Agile Rates live.">
+    <meta property="og:title" content="Live UK Grid | energy.tdcat.com">
+    <meta property="og:description" content="A real-time UK electricity grid dashboard. Track national demand, solar generation, and wholesale prices , grid frequency and Octopus Agile Rates live.">
+    <meta property="og:image" content="https://energy.tdcat.com/static/logo.png">
+    <meta property="og:url" content="https://energy.tdcat.com">
+    
+    <link rel="icon" type="image/png" href="/static/favicon.png">
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.0.0"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <link rel="stylesheet" href="/static/style.css">
+    
+    <script>
+        tailwind.config = {
+            theme: { extend: { colors: { 
+                'brand-cyan': 'rgb(var(--brand-cyan) / <alpha-value>)', 
+                'brand-orange': 'rgb(var(--brand-orange) / <alpha-value>)', 
+                'octo-pink': 'rgb(var(--octo-pink) / <alpha-value>)', 
+                'tesla-green': 'rgb(var(--tesla-green) / <alpha-value>)', 
+                'solar-yellow': 'rgb(var(--solar-yellow) / <alpha-value>)', 
+                'wind-green': 'rgb(var(--wind-green) / <alpha-value>)', 
+                'hydro-blue': 'rgb(var(--hydro-blue) / <alpha-value>)',
+                'ui-darkest': '#000000', 'ui-dark': '#1C1C1F', 'ui-card': '#252529', 'ui-grey': '#3F3F46', 'ui-light': '#D4D4D8' 
+            } } }
+        }
+    </script>
+</head>
+<body class="bg-ui-dark text-white min-h-screen relative flex flex-col">
+
+    <div id="info-modal" class="fixed inset-0 bg-black/80 z-50 hidden flex items-center justify-center backdrop-blur-sm transition-opacity">
+        <div class="bg-ui-card border border-ui-grey rounded-2xl p-8 max-w-lg w-full mx-4 shadow-2xl">
+            <div class="flex justify-between items-start mb-4">
+                <h2 id="modal-title" class="text-2xl font-bold text-white">Information</h2>
+                <button onclick="document.getElementById('info-modal').classList.add('hidden')" class="text-ui-grey hover:text-white text-2xl leading-none">&times;</button>
+            </div>
+            <div id="modal-desc" class="text-sm text-ui-light leading-relaxed"></div>
+        </div>
+    </div>
+
+    <div id="map-modal" class="fixed inset-0 bg-black/90 z-50 hidden flex items-center justify-center backdrop-blur-sm transition-opacity" onclick="if(event.target === this) this.classList.add('hidden')">
+        <div class="bg-ui-card border border-ui-grey rounded-2xl p-6 max-w-4xl w-full mx-4 shadow-2xl relative">
+            <button onclick="document.getElementById('map-modal').classList.add('hidden')" class="absolute top-4 right-4 text-ui-grey hover:text-white text-2xl leading-none z-10">&times;</button>
+            <h2 class="text-2xl font-bold text-white mb-2">Live Interconnector Flows</h2>
+            <p class="text-ui-light text-sm mb-6">Real-time physical energy flow across the undersea networks (GW).</p>
+            
+            <div class="w-full aspect-[5/4] bg-ui-darkest rounded-xl border border-ui-grey/50 relative overflow-hidden flex items-center justify-center bg-[url('/static/map.webp')] bg-center bg-no-repeat bg-cover" style="background-blend-mode: luminosity;">
+                <svg viewBox="0 0 1000 800" class="w-full h-full absolute inset-0">
+                    <path d="M 460 460 L 280 460" class="map-line" id="ml-ire" stroke="#3F3F46" />
+                    <path d="M 460 460 L 510 680" class="map-line" id="ml-fra" stroke="#3F3F46" />
+                    <path d="M 460 460 L 610 600" class="map-line" id="ml-bel" stroke="#3F3F46" />
+                    <path d="M 460 460 L 650 520" class="map-line" id="ml-ned" stroke="#3F3F46" />
+                    <path d="M 460 460 L 800 380" class="map-line" id="ml-den" stroke="#3F3F46" />
+                    <path d="M 460 460 L 680 200" class="map-line" id="ml-nor" stroke="#3F3F46" />
+
+                    <g transform="translate(460, 460)" id="mg-uk">
+                        <circle r="45" fill="#30C5D5" opacity="0.2" />
+                        <circle r="35" class="map-node" stroke="#30C5D5" />
+                        <text y="6" class="map-text">UK</text>
+                    </g>
+                    
+                    <g transform="translate(280, 460)" id="mg-ire">
+                        <circle r="35" class="map-node" id="mc-ire" />
+                        <text y="-45" class="map-lbl">Ireland</text>
+                        <text y="6" class="map-text" id="mt-ire">0.00</text>
+                    </g>
+
+                    <g transform="translate(510, 680)" id="mg-fra">
+                        <circle r="35" class="map-node" id="mc-fra" />
+                        <text y="-45" class="map-lbl">France</text>
+                        <text y="6" class="map-text" id="mt-fra">0.00</text>
+                    </g>
+
+                    <g transform="translate(610, 600)" id="mg-bel">
+                        <circle r="35" class="map-node" id="mc-bel" />
+                        <text y="-45" class="map-lbl">Belgium</text>
+                        <text y="6" class="map-text" id="mt-bel">0.00</text>
+                    </g>
+
+                    <g transform="translate(650, 520)" id="mg-ned">
+                        <circle r="35" class="map-node" id="mc-ned" />
+                        <text y="-45" class="map-lbl">Netherlands</text>
+                        <text y="6" class="map-text" id="mt-ned">0.00</text>
+                    </g>
+
+                    <g transform="translate(800, 380)" id="mg-den">
+                        <circle r="35" class="map-node" id="mc-den" />
+                        <text y="-45" class="map-lbl">Denmark</text>
+                        <text y="6" class="map-text" id="mt-den">0.00</text>
+                    </g>
+
+                    <g transform="translate(680, 200)" id="mg-nor">
+                        <circle r="35" class="map-node" id="mc-nor" />
+                        <text y="-45" class="map-lbl">Norway</text>
+                        <text y="6" class="map-text" id="mt-nor">0.00</text>
+                    </g>
+                </svg>
+            </div>
+        </div>
+    </div>
+
+
+    <header class="bg-ui-darkest border-b border-ui-grey p-4 sticky top-0 z-40">
+        <div class="max-w-[1500px] mx-auto flex flex-col md:flex-row items-center justify-between gap-3 md:gap-0">
+            <div class="flex items-center gap-3 w-full md:w-auto justify-center md:justify-start">
+                <img src="/static/logo.png" alt="Logo" class="h-8 object-contain" onerror="this.outerHTML='<div class=\'w-8 h-8 bg-brand-cyan rounded-md flex items-center justify-center text-ui-darkest font-bold\'>TD</div>'">
+                <h1 class="text-xl md:text-2xl font-bold text-ui-light truncate">UK Grid | tdcat.com</h1>
+            </div>
+            <div class="flex items-center justify-center flex-wrap gap-4 md:gap-6 w-full md:w-auto mt-2 md:mt-0">
+                <div class="flex items-center gap-2">
+                    <div class="w-3 h-3 bg-brand-cyan rounded-full animate-pulse"></div>
+                    <span id="update-time" class="text-xs md:text-sm text-ui-light">Updating live...</span>
+                </div>
+                <div class="h-4 w-px bg-ui-grey hidden sm:block"></div>
+                <div class="flex items-center gap-2" title="Visits in last 24h">
+                    <i class="fa-solid fa-users text-ui-grey text-xs"></i>
+                    <span id="cf-visits" class="text-xs md:text-sm font-semibold text-ui-light">--</span>
+                </div>
+                <div class="h-4 w-px bg-ui-grey hidden sm:block"></div>
+                <a href="/about" class="text-xs md:text-sm font-semibold text-ui-light hover:text-white transition">About</a>
+                <a href="/admin" class="text-xs md:text-sm font-semibold text-ui-light hover:text-white transition">Admin</a>
+            </div>
+        </div>
+    </header>
+
+    <main class="max-w-[1500px] mx-auto w-full p-4 sm:p-6 lg:p-8 space-y-10 flex-grow">
+        
+        <div class="mb-2 border-b border-ui-grey pb-4">
+            <h2 class="text-2xl font-bold text-white tracking-wide">Home Grid Data</h2>
+        </div>
+
+        <div class="flex flex-col gap-10">
+
+            <section class="bg-ui-card p-6 rounded-2xl border border-brand-cyan shadow-lg transition-colors">
+                <div class="flex flex-wrap justify-between items-center gap-4 mb-6">
+                    <h2 class="text-xl font-bold text-white flex items-center gap-3">
+    Weather (Bristol, UK)
+    <span id="weather-status-badge" class="text-xs px-2 py-1 rounded bg-ui-grey text-white font-mono tracking-widest shadow-sm">API: --</span>
+</h2>
+                    <div class="flex items-center gap-4">
+                        <div class="bg-[#18181B] rounded-full p-1 border border-ui-grey/50 flex text-sm shadow-inner hidden" id="forecast-toggle-pill"><button id="btn-24h" onclick="setForecastMode(24)" class="px-5 py-1.5 rounded-full bg-ui-grey text-white font-semibold shadow-sm transition-all">24h</button><button id="btn-7d" onclick="setForecastMode(168)" class="px-5 py-1.5 rounded-full text-ui-light hover:text-white transition-all">7 Day</button></div>
+                        <button onclick="toggleForecasts()" class="px-4 py-2 bg-ui-dark rounded-lg text-sm font-semibold text-brand-cyan border border-brand-cyan/30 hover:bg-brand-cyan/10 transition">Toggle Forecasts</button>
+                    </div>
+                </div>
+                
+                <div class="grid grid-cols-2 lg:grid-cols-4 gap-6">
+                    <div class="flex flex-col gap-4"><div class="p-2"><div class="flex justify-between items-start mb-2"><h2 class="text-sm font-semibold text-ui-light uppercase tracking-wider">Local Temp</h2><span class="text-xs bg-white text-ui-darkest px-2 py-0.5 rounded font-mono">°C</span></div><p id="w-temp" class="text-5xl xl:text-6xl font-extrabold text-white mt-1">---</p></div><div class="weather-expanded-charts hidden flex-col border-t border-ui-grey pt-4"><p id="title-temp" class="text-xs font-semibold text-ui-light mb-2">Temp Forecast</p><div class="h-[200px] w-full"><canvas id="chartForecastTemp"></canvas></div></div></div>
+                    <div class="flex flex-col gap-4"><div class="p-2"><div class="flex justify-between items-start mb-2"><h2 class="text-sm font-semibold text-ui-light uppercase tracking-wider">Wind Speed</h2><span class="text-xs bg-white text-ui-darkest px-2 py-0.5 rounded font-mono">mph</span></div><p id="w-wind" class="text-5xl xl:text-6xl font-extrabold text-wind-green mt-1">---</p></div><div class="weather-expanded-charts hidden flex-col border-t border-ui-grey pt-4"><p id="title-wind" class="text-xs font-semibold text-wind-green mb-2">Wind Forecast</p><div class="h-[200px] w-full"><canvas id="chartForecastWind"></canvas></div></div></div>
+                    <div class="flex flex-col gap-4"><div class="p-2"><div class="flex justify-between items-start mb-2"><h2 class="text-sm font-semibold text-ui-light uppercase tracking-wider">Daylight Length</h2><span class="text-xs bg-white text-ui-darkest px-2 py-0.5 rounded font-mono">hrs</span></div><p id="w-daylight" class="text-5xl xl:text-6xl font-extrabold text-solar-yellow mt-1">---</p></div><div class="weather-expanded-charts hidden flex-col border-t border-ui-grey pt-4"><p id="title-solar" class="text-xs font-semibold text-solar-yellow mb-2">Irradiance Forecast</p><div class="h-[200px] w-full"><canvas id="chartForecastSolar"></canvas></div></div></div>
+                    <div class="flex flex-col gap-4"><div class="p-2"><div class="flex justify-between items-start mb-2"><h2 class="text-sm font-semibold text-ui-light uppercase tracking-wider">Chance of Rain</h2><span class="text-xs bg-white text-ui-darkest px-2 py-0.5 rounded font-mono">%</span></div><p id="w-rain" class="text-5xl xl:text-6xl font-extrabold text-hydro-blue mt-1">---</p></div><div class="weather-expanded-charts hidden flex-col border-t border-ui-grey pt-4"><p id="title-rain" class="text-xs font-semibold text-hydro-blue mb-2">Precipitation Forecast</p><div class="h-[200px] w-full"><canvas id="chartForecastRain"></canvas></div></div></div>
+                </div>
+            </section>
+            
+            <section id="home-card" class="bg-ui-card p-6 rounded-2xl border border-tesla-green shadow-lg transition-all duration-300">
+                <div class="flex flex-wrap justify-between items-center gap-4 mb-6">
+                    <h2 class="text-xl font-bold text-white flex items-center gap-3">
+                        <span class="w-3 h-3 rounded-full bg-tesla-green inline-block"></span> Home
+                        <span id="grid-status-badge" class="text-xs px-2 py-1 rounded bg-ui-grey text-white font-mono tracking-widest shadow-sm">GRID: --</span>
+                    </h2>
+                    <div class="flex items-center gap-4">
+                        <button id="btn-glow" onclick="toggleGlow()" class="px-4 py-2 rounded-lg text-sm font-semibold text-tesla-green hover:bg-tesla-green/10 transition hidden">Toggle Glow</button>
+                        <div class="bg-[#18181B] rounded-full p-1 border border-ui-grey/50 flex text-sm shadow-inner">
+                            <button id="btn-kw" onclick="setPowerUnit('kW')" class="px-5 py-1.5 rounded-full bg-ui-grey text-white font-semibold shadow-sm transition-all">kW</button>
+                            <button id="btn-w" onclick="setPowerUnit('W')" class="px-5 py-1.5 rounded-full text-ui-light hover:text-white transition-all">W</button>
+                        </div>
+                        <button onclick="togglePwCharts()" class="px-4 py-2 bg-ui-dark rounded-lg text-sm font-semibold text-tesla-green border border-tesla-green/30 hover:bg-tesla-green/10 transition">Toggle Charts</button>
+                    </div>
+                </div>
+                
+                <div class="grid grid-cols-2 lg:grid-cols-4 gap-6">
+                    <div class="relative overflow-hidden p-2 flex flex-col justify-between h-full"><div class="relative z-10"><div class="flex justify-between items-start mb-2"><h2 class="text-sm font-semibold text-ui-light uppercase tracking-wider">Home Load</h2><span class="text-xs bg-white text-ui-darkest px-2 py-0.5 rounded font-mono pw-unit-pill">kW</span></div><p id="pw-home" class="text-5xl xl:text-6xl font-extrabold text-white mt-1">---</p></div><div class="absolute inset-0 z-0 opacity-20 mt-8"><canvas id="pwLoadSpark"></canvas></div><p id="cum-home" class="text-sm text-[#A1A1AA] text-right relative z-10 mt-8 font-medium">Today: -- kWh</p></div>
+                    <div class="relative overflow-hidden p-2 flex flex-col justify-between h-full"><div class="relative z-10"><div class="flex justify-between items-start mb-2"><h2 class="text-sm font-semibold text-ui-light uppercase tracking-wider">Solar Generating</h2><span class="text-xs bg-white text-ui-darkest px-2 py-0.5 rounded font-mono pw-unit-pill">kW</span></div><p id="pw-solar" class="text-5xl xl:text-6xl font-extrabold text-solar-yellow mt-1">---</p><p id="pw-solar-label" class="text-xs text-[#A1A1AA] font-medium mt-1">---</p></div><div class="absolute inset-0 z-0 opacity-20 mt-8"><canvas id="pwSolarSpark"></canvas></div><p id="cum-solar" class="text-[11px] text-[#A1A1AA] text-right relative z-10 mt-8 font-medium leading-tight">Today AC: -- kWh<br><span class="text-[#3F3F46]">DC Est: -- kWh</span></p></div>
+                    <div class="relative overflow-hidden p-2 flex flex-col justify-between h-full"><div class="relative z-10"><div class="flex justify-between items-start mb-2"><h2 class="text-sm font-semibold text-ui-light uppercase tracking-wider">Battery Level</h2><span class="text-xs bg-white text-ui-darkest px-2 py-0.5 rounded font-mono">%</span></div><p id="pw-level" class="text-5xl xl:text-6xl font-extrabold text-[#A1A1AA] mt-1">---</p><p id="pw-battery-label" class="text-xs text-[#A1A1AA] font-medium mt-1">---</p></div><div class="absolute inset-0 z-0 opacity-20 mt-8"><canvas id="pwBattSpark"></canvas></div><p id="cum-batt" class="text-[11px] text-[#A1A1AA] text-right relative z-10 mt-8 font-medium leading-tight">In: -- kWh<br>Out: -- kWh</p></div>
+                    <div class="relative overflow-hidden p-2 flex flex-col justify-between h-full"><div class="relative z-10"><div class="flex justify-between items-start mb-2"><h2 class="text-sm font-semibold text-ui-light uppercase tracking-wider">Grid Flow</h2><span class="text-xs bg-white text-ui-darkest px-2 py-0.5 rounded font-mono pw-unit-pill">kW</span></div><p id="pw-grid" class="text-5xl xl:text-6xl font-extrabold text-white mt-1">---</p><p id="pw-grid-label" class="text-xs text-[#A1A1AA] font-medium mt-1">---</p></div><div class="absolute inset-0 z-0 opacity-20 mt-8"><canvas id="pwGridSpark"></canvas></div><p id="cum-grid" class="text-[11px] text-[#A1A1AA] text-right relative z-10 mt-8 font-medium leading-tight">Imp: -- kWh<br>Exp: -- kWh</p></div>
+                </div>
+
+                <div id="pw-expanded-charts" class="hidden mt-8 pt-6 border-t border-ui-grey grid grid-cols-1 gap-6">
+                    <div class="flex flex-col"><div class="flex justify-between items-center mb-2"><h3 id="title-chart-load" class="text-sm font-semibold text-ui-light uppercase">Home Load (kW)</h3></div><div class="h-[250px] w-full"><canvas id="chartPwLoad"></canvas></div></div>
+                    <div class="flex flex-col"><div class="flex justify-between items-center mb-2"><h3 id="title-chart-solar" class="text-sm font-semibold text-solar-yellow uppercase">Solar Generated (kW)</h3></div><div class="h-[250px] w-full"><canvas id="chartPwSolar"></canvas></div></div>
+                    <div class="flex flex-col"><div class="flex justify-between items-center mb-2"><h3 class="text-sm font-semibold text-[#A1A1AA] uppercase">Battery Level (%)</h3></div><div class="h-[250px] w-full"><canvas id="chartPwBatt"></canvas></div></div>
+                    <div class="flex flex-col"><div class="flex justify-between items-center mb-2"><h3 id="title-chart-grid" class="text-sm font-semibold text-tesla-green uppercase">Grid Flow (kW)</h3></div><div class="h-[250px] w-full"><canvas id="chartPwGrid"></canvas></div></div>
+                </div>
+            </section>
+
+            <section class="bg-ui-card p-6 rounded-2xl border border-octo-pink shadow-lg transition-colors">
+                <div class="flex flex-wrap justify-between items-center gap-4 mb-6">
+                    <h2 class="text-xl font-bold text-white flex items-center gap-3">
+                        <span class="w-3 h-3 rounded-full bg-octo-pink inline-block"></span> Octopus Energy
+                    </h2>
+                    <div class="flex items-center gap-4">
+                        <button onclick="toggleOctoCharts()" class="px-4 py-2 bg-ui-dark rounded-lg text-sm font-semibold text-octo-pink border border-octo-pink/30 hover:bg-octo-pink/10 transition">Toggle Charts</button>
+                    </div>
+                </div>
+                <div class="grid grid-cols-2 md:grid-cols-5 gap-6">
+                    <div onclick="toggleOctoCharts()" class="relative overflow-hidden p-2 flex flex-col justify-between h-full cursor-pointer group transition-colors"><div class="absolute top-2 right-2 text-ui-grey group-hover:text-white transition-colors z-20">⤢</div><div class="relative z-10"><div class="flex justify-between items-start mb-2"><h2 id="lbl-oct-imp" class="text-sm font-semibold text-octo-pink uppercase tracking-wider transition-colors">Live Import</h2><span class="text-xs bg-white text-ui-darkest px-2 py-0.5 rounded font-mono">p/kWh</span></div><p id="oct-imp-val" class="text-5xl xl:text-6xl font-extrabold text-white mt-1">---</p></div><div class="absolute inset-0 z-0 opacity-20 mt-8"><canvas id="octImpSpark"></canvas></div></div>
+                    <div onclick="toggleOctoCharts()" class="relative overflow-hidden p-2 flex flex-col justify-between h-full cursor-pointer group transition-colors"><div class="absolute top-2 right-2 text-ui-grey group-hover:text-white transition-colors z-20">⤢</div><div class="relative z-10"><div class="flex justify-between items-start mb-2"><h2 id="lbl-oct-exp" class="text-sm font-semibold text-octo-pink uppercase tracking-wider transition-colors">Live Export</h2><span class="text-xs bg-white text-ui-darkest px-2 py-0.5 rounded font-mono">p/kWh</span></div><p id="oct-exp-val" class="text-5xl xl:text-6xl font-extrabold text-white mt-1">---</p></div><div class="absolute inset-0 z-0 opacity-20 mt-8"><canvas id="octExpSpark"></canvas></div></div>
+                    <div class="p-2 flex flex-col justify-between h-full border-l border-ui-grey/50 pl-6"><div class="relative z-10"><div class="flex justify-between items-start mb-2"><h2 id="title-oct-imp" class="text-sm font-semibold text-ui-light uppercase tracking-wider">Elec Import</h2><span class="text-xs bg-white text-ui-darkest px-2 py-0.5 rounded font-mono">kWh</span></div><p id="oct-yest-imp" class="text-5xl xl:text-6xl font-extrabold text-white mt-1">---</p></div></div>
+                    <div class="p-2 flex flex-col justify-between h-full"><div class="relative z-10"><div class="flex justify-between items-start mb-2"><h2 id="title-oct-exp" class="text-sm font-semibold text-ui-light uppercase tracking-wider">Elec Export</h2><span class="text-xs bg-white text-ui-darkest px-2 py-0.5 rounded font-mono">kWh</span></div><p id="oct-yest-exp" class="text-5xl xl:text-6xl font-extrabold text-white mt-1">---</p></div></div>
+                    <div class="p-2 flex flex-col justify-between h-full border-l border-ui-grey/50 pl-6"><div class="relative z-10"><div class="flex justify-between items-start mb-2"><h2 id="title-oct-gas" class="text-sm font-semibold text-ui-light uppercase tracking-wider">Gas Used</h2><span class="text-xs bg-white text-ui-darkest px-2 py-0.5 rounded font-mono">kWh</span></div><p id="oct-yest-gas" class="text-5xl xl:text-6xl font-extrabold text-white mt-1">---</p></div><p id="oct-yest-gas-m3" class="text-xs text-[#A1A1AA] text-right relative z-10 mt-8 font-medium">-- m³</p></div>
+                </div>
+            </section>
+            
+            <section id="octo-expanded-chart" class="hidden mt-4">
+                <div class="bg-ui-card p-6 rounded-2xl border border-octo-pink shadow-lg transition-colors">
+                    <div class="flex justify-between items-center mb-4">
+                        <h3 class="text-xl font-bold text-white">24-Hour Rate Comparison (p/kWh)</h3>
+                        <button onclick="toggleOctoCharts()" class="text-ui-grey hover:text-white text-2xl">&times;</button>
+                    </div>
+                    <div class="h-[300px] w-full relative">
+                        <canvas id="chartOctoDetail"></canvas>
+                    </div>
+                </div>
+            </section>
+
+        </div>
+
+        <div class="mt-16 mb-2 border-b border-ui-grey pb-4">
+            <h2 class="text-2xl font-bold text-white tracking-wide">National Grid Data</h2>
+        </div>
+
+        <div class="flex flex-col gap-6">
+            
+            <section class="grid grid-cols-2 md:grid-cols-4 gap-6">
+                <div class="bg-ui-card p-6 rounded-2xl border border-ui-grey shadow-lg relative overflow-hidden flex flex-col justify-between"><div class="relative z-10 pointer-events-none"><div class="flex justify-between items-start mb-2"><h2 class="text-sm font-semibold text-ui-light uppercase tracking-wider">Grid Demand</h2><span class="text-xs bg-white text-ui-darkest px-2 py-0.5 rounded font-mono">GW</span></div><p id="demand-val" class="text-4xl xl:text-5xl font-extrabold text-white">---</p></div><div class="absolute inset-0 z-0 opacity-20 mt-12"><canvas id="demandSparkline"></canvas></div></div>
+                <div class="bg-ui-card p-6 rounded-2xl border border-ui-grey shadow-lg relative overflow-hidden flex flex-col justify-between"><div class="relative z-10 pointer-events-none"><div class="flex justify-between items-start mb-2"><h2 class="text-sm font-semibold text-ui-light uppercase tracking-wider">Generation</h2><span class="text-xs bg-white text-ui-darkest px-2 py-0.5 rounded font-mono">GW</span></div><p id="gen-val" class="text-4xl xl:text-5xl font-extrabold text-white">---</p></div><div class="absolute inset-0 z-0 opacity-20 mt-12"><canvas id="genSparkline"></canvas></div></div>
+                <div class="bg-ui-card p-6 rounded-2xl border border-ui-grey shadow-lg relative overflow-hidden flex flex-col justify-between"><div class="relative z-10 pointer-events-none"><div class="flex justify-between items-start mb-2"><h2 class="text-sm font-semibold text-ui-light uppercase tracking-wider">Net Flow</h2><span class="text-xs bg-white text-ui-darkest px-2 py-0.5 rounded font-mono">GW</span></div><div class="flex items-center gap-3"><p id="net-flow-val" class="text-4xl xl:text-5xl font-extrabold text-white">---</p><div id="flow-indicator" class="w-10 h-10 flex-shrink-0 flex items-center justify-center bg-ui-grey text-ui-darkest rounded-full font-black text-xl z-10 pointer-events-auto">--</div></div></div><div class="absolute inset-0 z-0 opacity-20 mt-12"><canvas id="flowSparkline"></canvas></div></div>
+                <div id="freq-card" onclick="toggleFreqChart()" class="bg-ui-card p-6 rounded-2xl border border-ui-grey shadow-lg relative overflow-hidden flex flex-col justify-between cursor-pointer transition-colors group">
+                    <div class="absolute top-4 right-4 text-ui-grey group-hover:text-white transition-colors z-20">⤢</div>
+                    <div class="relative z-10 pointer-events-none"><div class="flex justify-between items-start mb-2"><h2 class="text-sm font-semibold text-ui-light uppercase tracking-wider">Frequency</h2><span class="text-xs bg-white text-ui-darkest px-2 py-0.5 rounded font-mono">Hz</span></div><p id="freq-val" class="text-4xl xl:text-5xl font-extrabold text-white">---</p></div>
+                    <div class="absolute inset-0 z-0 opacity-20 mt-12"><canvas id="freqSparkline"></canvas></div>
+                </div>
+            </section>
+
+            <section class="grid grid-cols-1 md:grid-cols-4 gap-6">
+                <div id="niv-card" onclick="toggleNivChart()" class="bg-ui-card p-6 rounded-2xl border shadow-lg relative overflow-hidden flex flex-col justify-between cursor-pointer transition-colors group">
+                    <div class="absolute top-4 right-4 text-ui-grey group-hover:text-white transition-colors z-20">⤢</div>
+                    <div class="relative z-10 pointer-events-none">
+                        <div class="flex justify-between items-start mb-2">
+                            <h2 id="niv-title" class="text-sm font-semibold uppercase tracking-wider text-ui-light">System Imbalance</h2>
+                            <span class="text-xs bg-white text-ui-darkest px-2 py-0.5 rounded font-mono">MWh</span>
+                        </div>
+                        <p id="niv-val" class="text-4xl xl:text-5xl font-extrabold">---</p>
+                    </div>
+                    <div class="absolute inset-0 z-0 opacity-20 mt-12"><canvas id="nivSparkline"></canvas></div>
+                </div>
+                
+                <div id="mi-price-card" onclick="togglePriceCharts()" class="bg-ui-card p-6 rounded-2xl border shadow-lg relative overflow-hidden flex flex-col justify-between cursor-pointer transition-colors group"><div class="absolute top-4 right-4 text-ui-grey group-hover:text-white transition-colors z-20">⤢</div><div class="relative z-10 pointer-events-none"><div class="flex justify-between items-start mb-2"><h2 id="mi-price-title" class="text-sm font-semibold uppercase tracking-wider transition-colors">MIDP (EPEX SPOT)</h2><span class="text-xs bg-white text-ui-darkest px-2 py-0.5 rounded font-mono">£/MWh</span></div><p id="mi-price-val" class="text-4xl xl:text-5xl font-extrabold transition-colors">---</p></div><div class="absolute inset-0 z-0 opacity-20 mt-12"><canvas id="miPriceSparkline"></canvas></div></div>
+
+                <div id="price-card" onclick="togglePriceCharts()" class="bg-ui-card p-6 rounded-2xl border shadow-lg relative overflow-hidden flex flex-col justify-between cursor-pointer transition-colors group"><div class="absolute top-4 right-4 text-ui-grey group-hover:text-white transition-colors z-20">⤢</div><div class="relative z-10 pointer-events-none"><div class="flex justify-between items-start mb-2"><h2 id="price-title" class="text-sm font-semibold uppercase tracking-wider transition-colors">Balancing Price</h2><span class="text-xs bg-white text-ui-darkest px-2 py-0.5 rounded font-mono">£/MWh</span></div><p id="price-val" class="text-4xl xl:text-5xl font-extrabold transition-colors">---</p></div><div class="absolute inset-0 z-0 opacity-20 mt-12"><canvas id="priceSparkline"></canvas></div></div>
+                
+                <div id="carbon-card" class="bg-ui-card p-6 rounded-2xl border shadow-lg relative overflow-hidden flex flex-col justify-between transition-colors"><div class="relative z-10 pointer-events-none"><div class="flex justify-between items-start mb-2"><h2 class="text-sm font-semibold uppercase tracking-wider text-inherit">Carbon</h2><span class="text-xs bg-white text-ui-darkest px-2 py-0.5 rounded font-mono">gCO₂</span></div><p id="intensity-val" class="text-4xl xl:text-5xl font-extrabold transition-colors">---</p></div><div class="absolute inset-0 z-0 opacity-50 mt-12"><canvas id="carbonSparkline"></canvas></div></div>
+            </section>
+
+            <section id="freq-expanded-chart" class="hidden mt-4">
+                <div class="bg-ui-card p-6 rounded-2xl border border-ui-grey shadow-lg">
+                    <div class="flex justify-between items-center mb-4">
+                        <h3 class="text-xl font-bold text-white">24-Hour Grid Frequency (Hz)</h3>
+                        <button onclick="toggleFreqChart()" class="text-ui-grey hover:text-white text-2xl">&times;</button>
+                    </div>
+                    <div class="h-[300px] w-full relative"><canvas id="chartFreqDetail"></canvas></div>
+                </div>
+            </section>
+
+            <section id="niv-expanded-chart" class="hidden mt-4">
+                <div class="bg-ui-card p-6 rounded-2xl border border-ui-grey shadow-lg">
+                    <div class="flex justify-between items-center mb-4">
+                        <div class="flex items-center gap-4">
+                            <h3 class="text-xl font-bold text-white">24-Hour System Imbalance (MWh)</h3>
+                            <button id="btn-niv-overlay" onclick="toggleNivOverlay()" class="px-3 py-1.5 bg-ui-dark rounded-lg text-xs font-semibold text-white border border-ui-grey hover:bg-ui-grey transition">Overlay Price</button>
+                        </div>
+                        <button onclick="toggleNivChart()" class="text-ui-grey hover:text-white text-2xl">&times;</button>
+                    </div>
+                    <div class="h-[300px] w-full relative"><canvas id="chartNivDetail"></canvas></div>
+                </div>
+            </section>
+
+            <section id="price-expanded-chart" class="hidden mt-4"><div class="bg-ui-card p-6 rounded-2xl border border-ui-grey shadow-lg"><div class="flex justify-between items-center mb-4"><h3 class="text-xl font-bold text-white">24-Hour Price Comparison (£/MWh)</h3><button onclick="togglePriceCharts()" class="text-ui-grey hover:text-white text-2xl">&times;</button></div><div class="h-[300px] w-full relative"><canvas id="chartPriceDetail"></canvas></div></div></section>
+
+            <section class="bg-ui-card p-6 rounded-2xl border border-ui-grey shadow-lg mt-4">
+                <h3 class="text-xl font-bold text-white mb-6">Generation by Fuel Type</h3>
+                
+                <div class="grid grid-cols-1 lg:grid-cols-4 gap-6 items-center">
+                    
+                    <div class="lg:col-span-1 flex flex-col justify-between h-[450px]">
+                        <div class="flex-grow w-full relative">
+                            <canvas id="fuelDetailChart"></canvas>
+                        </div>
+                        <div class="mt-4 pt-4 border-t border-ui-grey relative">
+                            <label class="block text-xs font-semibold text-ui-light uppercase mb-2 tracking-wider">Isolate Profile (24h)</label>
+                            
+                            <div class="relative w-full">
+                                <button id="custom-fuel-selector-btn" class="w-full bg-ui-darkest border border-ui-grey text-white rounded-lg p-2.5 text-sm focus:outline-none hover:border-brand-cyan transition font-medium flex justify-between items-center text-left shadow-inner">
+                                    <span id="custom-fuel-label">Solar</span>
+                                    <span class="text-ui-grey text-xs">▼</span>
+                                </button>
+                                <ul id="custom-fuel-options" class="absolute z-50 w-full bg-ui-card border border-ui-grey mt-2 rounded-lg shadow-2xl hidden max-h-60 overflow-auto hide-scrollbar">
+                                    <li onclick="selectFuel('solar', 'Solar')" class="p-3 text-sm hover:bg-brand-cyan hover:text-ui-darkest cursor-pointer transition text-ui-light font-medium border-b border-ui-grey/30">Solar</li>
+                                    <li onclick="selectFuel('wind', 'Wind')" class="p-3 text-sm hover:bg-brand-cyan hover:text-ui-darkest cursor-pointer transition text-ui-light font-medium border-b border-ui-grey/30">HV Wind</li>
+                                    <li onclick="selectFuel('lv_wind', 'LV Wind')" class="p-3 text-sm hover:bg-brand-cyan hover:text-ui-darkest cursor-pointer transition text-ui-light font-medium border-b border-ui-grey/30">LV Wind</li>
+                                    <li onclick="selectFuel('hydro', 'Hydro')" class="p-3 text-sm hover:bg-brand-cyan hover:text-ui-darkest cursor-pointer transition text-ui-light font-medium border-b border-ui-grey/30">Hydro</li>
+                                    <li onclick="selectFuel('pumped_storage', 'Pumped Storage')" class="p-3 text-sm hover:bg-brand-cyan hover:text-ui-darkest cursor-pointer transition text-ui-light font-medium border-b border-ui-grey/30">Pumped Storage</li>
+                                    <li onclick="selectFuel('biomass', 'Biomass')" class="p-3 text-sm hover:bg-brand-cyan hover:text-ui-darkest cursor-pointer transition text-ui-light font-medium border-b border-ui-grey/30">Biomass</li>
+                                    <li onclick="selectFuel('nuclear', 'Nuclear')" class="p-3 text-sm hover:bg-brand-cyan hover:text-ui-darkest cursor-pointer transition text-ui-light font-medium border-b border-ui-grey/30">Nuclear</li>
+                                    <li onclick="selectFuel('ccgt', 'Gas (CCGT)')" class="p-3 text-sm hover:bg-brand-cyan hover:text-ui-darkest cursor-pointer transition text-ui-light font-medium border-b border-ui-grey/30">Gas (CCGT)</li>
+                                    <li onclick="selectFuel('ocg', 'Gas (OCG)')" class="p-3 text-sm hover:bg-brand-cyan hover:text-ui-darkest cursor-pointer transition text-ui-light font-medium border-b border-ui-grey/30">Gas (OCG)</li>
+                                    <li onclick="selectFuel('imports', 'Imports')" class="p-3 text-sm hover:bg-brand-cyan hover:text-ui-darkest cursor-pointer transition text-ui-light font-medium border-b border-ui-grey/30">Imports</li>
+                                    <li onclick="selectFuel('other', 'Other')" class="p-3 text-sm hover:bg-brand-cyan hover:text-ui-darkest cursor-pointer transition text-ui-light font-medium">Other</li>
+                                </ul>
+                            </div>
+
+                        </div>
+                    </div>
+
+                    <div class="lg:col-span-2 h-[450px] w-full relative flex justify-center border-l border-r border-ui-grey/50 px-2">
+                        <canvas id="genMixChart"></canvas>
+                    </div>
+
+                    <div id="custom-legend" class="lg:col-span-1 flex flex-col gap-2 max-h-[450px] overflow-y-auto hide-scrollbar pl-2"></div>
+                </div>
+            </section>
+
+            <section class="bg-ui-card p-6 rounded-2xl border border-ui-grey shadow-lg mt-4 mb-6">
+                <h3 class="text-xl font-bold text-white mb-6">Live Energy Flow</h3>
+                
+                <div class="w-full rounded-xl border border-ui-grey/50 overflow-x-auto hide-scrollbar relative flex items-center justify-center py-2" style="background-color: var(--color-flow-bg, #000000);">
+                    <div class="w-full max-w-[900px] aspect-[100/38] relative">
+                        <svg id="flow-diagram" viewBox="0 0 1000 400" class="w-full h-full font-sans absolute inset-0">
+                            <defs>
+                                <style>
+                                    .flow-text { font-family: 'Inter', sans-serif; fill: #D4D4D8; text-anchor: middle; }
+                                    .flow-val { font-family: 'Inter', sans-serif; fill: #ffffff; text-anchor: middle; font-size: 13px; font-weight: bold; }
+                                    .flow-title { font-family: 'Inter', sans-serif; fill: #A1A1AA; text-anchor: middle; font-size: 9px; font-weight: 600; letter-spacing: 1px; text-transform: uppercase; }
+                                    .flow-line { fill: none; stroke-width: 1.5; opacity: 0.4; }
+                                    .node-circle { fill: #1C1C1F; stroke-width: 1.5; }
+                                </style>
+                            </defs>
+
+                            <path id="p-sol" d="M 130 70 C 315 70, 315 200, 500 200" class="flow-line" stroke="var(--color-solar, #FFD700)" />
+                            <path id="p-hv" d="M 130 200 L 500 200" class="flow-line" stroke="var(--color-hv, #F6643C)" />
+                            <path id="p-wind" d="M 130 330 C 315 330, 315 200, 500 200" class="flow-line" stroke="var(--color-wind, #10B981)" />
+                            
+                            <path id="p-imp" d="M 500 350 L 500 200" class="flow-line" stroke="var(--color-imports, #64748B)" />
+
+                            <path id="p-psh" d="M 500 200 C 685 200, 685 70, 870 70" class="flow-line" stroke="var(--color-stor, #30C5D5)" />
+                            <path id="p-dem" d="M 500 200 L 870 200" class="flow-line" stroke="var(--color-flow-dem, #D4D4D8)" />
+                            <path id="p-exp" d="M 500 200 C 685 200, 685 330, 870 330" class="flow-line" stroke="var(--color-flow-exp, #FF00A0)" />
+
+                            <circle class="flow-dot" fill="#ffffff" opacity="0.9" id="dot-sol-1"><animateMotion id="anim-sol-1" dur="2s" repeatCount="indefinite"><mpath href="#p-sol"/></animateMotion></circle>
+                            <circle class="flow-dot" fill="#ffffff" opacity="0.9" id="dot-sol-2"><animateMotion id="anim-sol-2" dur="2s" begin="1s" repeatCount="indefinite"><mpath href="#p-sol"/></animateMotion></circle>
+
+                            <circle class="flow-dot" fill="#ffffff" opacity="0.9" id="dot-hv-1"><animateMotion id="anim-hv-1" dur="2.5s" repeatCount="indefinite"><mpath href="#p-hv"/></animateMotion></circle>
+                            <circle class="flow-dot" fill="#ffffff" opacity="0.9" id="dot-hv-2"><animateMotion id="anim-hv-2" dur="2.5s" begin="1.25s" repeatCount="indefinite"><mpath href="#p-hv"/></animateMotion></circle>
+
+                            <circle class="flow-dot" fill="#ffffff" opacity="0.9" id="dot-wind-1"><animateMotion id="anim-wind-1" dur="2.8s" repeatCount="indefinite"><mpath href="#p-wind"/></animateMotion></circle>
+                            <circle class="flow-dot" fill="#ffffff" opacity="0.9" id="dot-wind-2"><animateMotion id="anim-wind-2" dur="2.8s" begin="1.4s" repeatCount="indefinite"><mpath href="#p-wind"/></animateMotion></circle>
+
+                            <circle class="flow-dot" fill="#ffffff" opacity="0.9" id="dot-imp-1"><animateMotion id="anim-imp-1" dur="3s" repeatCount="indefinite"><mpath href="#p-imp"/></animateMotion></circle>
+                            <circle class="flow-dot" fill="#ffffff" opacity="0.9" id="dot-imp-2"><animateMotion id="anim-imp-2" dur="3s" begin="1.5s" repeatCount="indefinite"><mpath href="#p-imp"/></animateMotion></circle>
+
+                            <circle class="flow-dot" fill="#ffffff" opacity="0.9" id="dot-psh-1"><animateMotion id="anim-psh-1" dur="3s" repeatCount="indefinite"><mpath href="#p-psh"/></animateMotion></circle>
+                            <circle class="flow-dot" fill="#ffffff" opacity="0.9" id="dot-psh-2"><animateMotion id="anim-psh-2" dur="3s" begin="1.5s" repeatCount="indefinite"><mpath href="#p-psh"/></animateMotion></circle>
+
+                            <circle class="flow-dot" fill="#ffffff" opacity="0.9" id="dot-dem-1"><animateMotion id="anim-dem-1" dur="2s" repeatCount="indefinite"><mpath href="#p-dem"/></animateMotion></circle>
+                            <circle class="flow-dot" fill="#ffffff" opacity="0.9" id="dot-dem-2"><animateMotion id="anim-dem-2" dur="2s" begin="1s" repeatCount="indefinite"><mpath href="#p-dem"/></animateMotion></circle>
+
+                            <circle class="flow-dot" fill="#ffffff" opacity="0.9" id="dot-exp-1"><animateMotion id="anim-exp-1" dur="2.5s" repeatCount="indefinite"><mpath href="#p-exp"/></animateMotion></circle>
+                            <circle class="flow-dot" fill="#ffffff" opacity="0.9" id="dot-exp-2"><animateMotion id="anim-exp-2" dur="2.5s" begin="1.25s" repeatCount="indefinite"><mpath href="#p-exp"/></animateMotion></circle>
+
+
+                            <g transform="translate(130, 70)">
+                                <circle r="46" class="node-circle" stroke="var(--color-solar, #FFD700)" />
+                                <foreignObject width="24" height="24" x="-12" y="-28" style="color: var(--color-solar, #FFD700);">
+                                    <div xmlns="http://www.w3.org/1999/xhtml" class="flex items-center justify-center w-full h-full"><i id="icon-sol" class="fa-solid fa-sun text-[18px]"></i></div>
+                                </foreignObject>
+                                <text y="5" class="flow-title">Solar</text>
+                                <text y="22" class="flow-val" id="svg-val-sol">-- GW</text>
+                            </g>
+                            
+                            <g id="hv-node-group" transform="translate(130, 200)" class="cursor-pointer transition-opacity hover:opacity-80">
+                                <circle r="46" class="node-circle" stroke="var(--color-hv, #F6643C)" />
+                                <foreignObject width="24" height="24" x="-12" y="-28" style="color: var(--color-hv, #F6643C);">
+                                    <div xmlns="http://www.w3.org/1999/xhtml" class="flex items-center justify-center w-full h-full"><i id="icon-hv" class="fa-solid fa-industry text-[18px]"></i></div>
+                                </foreignObject>
+                                <text y="5" class="flow-title">HV Gen</text>
+                                <text y="22" class="flow-val" id="svg-val-hv">-- GW</text>
+                            </g>
+
+                            <g id="wind-node-group" transform="translate(130, 330)" class="cursor-pointer transition-opacity hover:opacity-80">
+                                <circle r="46" class="node-circle" stroke="var(--color-wind, #10B981)" stroke-width="2" />    
+                                
+                                <circle id="svg-wind-pie" r="46" fill="transparent" stroke="var(--color-lv-wind, #5FB035)" stroke-width="4" stroke-dasharray="0 290" transform="rotate(-90)" style="transition: stroke-dasharray 1s ease-in-out;" />
+                                
+                                <foreignObject width="24" height="24" x="-12" y="-28" style="color: var(--color-wind, #10B981);">
+                                    <div xmlns="http://www.w3.org/1999/xhtml" class="flex items-center justify-center w-full h-full">
+                                        <i id="icon-wind" class="fa-solid fa-wind text-[18px]"></i>
+                                    </div>
+                                </foreignObject>
+                                
+                                <text y="5" class="flow-title">Wind</text>
+                                <text y="22" class="flow-val" id="svg-val-wind-total">-- GW</text>
+                            </g>
+
+                            <g transform="translate(500, 350)" class="cursor-pointer hover:opacity-80 transition-opacity" onclick="openMapModal()">
+                                <circle r="46" class="node-circle" stroke="var(--color-imports, #64748B)" />
+                                <foreignObject width="24" height="24" x="-12" y="-28" style="color: var(--color-imports, #64748B);">
+                                    <div xmlns="http://www.w3.org/1999/xhtml" class="flex items-center justify-center w-full h-full"><i id="icon-imp" class="fa-solid fa-globe text-[18px]"></i></div>
+                                </foreignObject>
+                                <text y="5" class="flow-title">Imports</text>
+                                <text y="22" class="flow-val" id="svg-val-imp">-- GW</text>
+                            </g>
+
+                            <g transform="translate(500, 200)">
+                                <circle r="65" class="node-circle" stroke="var(--color-tot, #30C5D5)" stroke-width="2.5" />
+                                <foreignObject width="24" height="24" x="-12" y="-32" style="color: var(--color-tot, #30C5D5);">
+                                    <div xmlns="http://www.w3.org/1999/xhtml" class="flex items-center justify-center w-full h-full"><i class="fa-solid fa-bolt text-[22px]"></i></div>
+                                </foreignObject>
+                                <text y="4" class="flow-title text-white">Total Output</text>
+                                <text y="26" class="flow-val" id="svg-val-tot" style="font-size: 20px;">-- GW</text>
+                            </g>
+
+                            <g transform="translate(870, 70)">
+                                <circle r="46" class="node-circle" stroke="var(--color-stor, #30C5D5)" />
+                                <foreignObject width="24" height="24" x="-12" y="-28" style="color: var(--color-stor, #30C5D5);">
+                                    <div xmlns="http://www.w3.org/1999/xhtml" class="flex items-center justify-center w-full h-full"><i id="icon-psh" class="fa-solid fa-battery-half text-[18px]"></i></div>
+                                </foreignObject>
+                                <text y="5" class="flow-title">Storage</text>
+                                <text y="22" class="flow-val" id="svg-val-psh">-- GW</text>
+                            </g>
+
+                            <g transform="translate(870, 200)">
+                                <circle r="46" class="node-circle" stroke="var(--color-flow-dem, #D4D4D8)" />
+                                <foreignObject width="24" height="24" x="-12" y="-28" style="color: var(--color-flow-dem, #D4D4D8);">
+                                    <div xmlns="http://www.w3.org/1999/xhtml" class="flex items-center justify-center w-full h-full"><i id="icon-dem" class="fa-solid fa-house text-[18px]"></i></div>
+                                </foreignObject>
+                                <text y="5" class="flow-title">Demand</text>
+                                <text y="22" class="flow-val" id="svg-val-dem">-- GW</text>
+                            </g>
+
+                            <g transform="translate(870, 330)" class="cursor-pointer hover:opacity-80 transition-opacity" onclick="openMapModal()">
+                                <circle r="46" class="node-circle" stroke="var(--color-flow-exp, #FF00A0)" />
+                                <foreignObject width="24" height="24" x="-12" y="-28" style="color: var(--color-flow-exp, #FF00A0);">
+                                    <div xmlns="http://www.w3.org/1999/xhtml" class="flex items-center justify-center w-full h-full"><i id="icon-exp" class="fa-solid fa-file-export text-[18px]"></i></div>
+                                </foreignObject>
+                                <text y="5" class="flow-title">Exports</text>
+                                <text y="22" class="flow-val" id="svg-val-exp">-- GW</text>
+                            </g>
+                        </svg>
+                    </div>
+                </div>
+            </section>
+
+            <section class="bg-ui-card p-6 rounded-2xl border border-ui-grey shadow-lg">
+                <div class="flex justify-between items-end mb-6">
+                    <h3 class="text-xl font-bold text-white">24-Hour Generation Mix</h3>
+                    <div class="bg-ui-darkest rounded-lg p-1 border border-ui-grey flex text-sm">
+                        <button id="btn-gw" onclick="setHistoryMode('GW')" class="px-4 py-1 rounded bg-ui-grey text-white font-semibold transition">GW</button>
+                        <button id="btn-perc" onclick="setHistoryMode('%')" class="px-4 py-1 rounded text-ui-light hover:text-white transition">%</button>
+                    </div>
+                </div>
+                <div class="h-[450px] w-full relative"><canvas id="historyChart"></canvas></div>
+            </section>
+
+            <section class="bg-ui-card p-6 rounded-2xl border border-ui-grey shadow-lg">
+                <h3 class="text-xl font-bold text-white mb-6">The 4 Levels of Demand (GW)</h3>
+                
+                <div class="grid grid-cols-1 lg:grid-cols-4 gap-6 items-center">
+                    <div class="lg:col-span-3 h-[450px] w-full relative">
+                        <canvas id="fourDemandChart"></canvas>
+                    </div>
+
+                    <div class="lg:col-span-1 bg-ui-darkest p-6 rounded-xl border border-ui-grey shadow-inner">
+                        <h4 class="text-sm font-bold text-ui-light uppercase tracking-wider mb-4 border-b border-ui-grey/50 pb-2">Live Breakdown</h4>
+                        <table class="w-full text-sm text-left">
+                            <tr class="text-ui-light"><th class="pb-2 font-medium">Source</th><th class="pb-2 font-medium text-right">GW</th></tr>
+                            <tr><td class="py-1.5 text-white">Transmission (ITSDO)</td><td class="py-1.5 text-white font-mono text-right" id="brk-trans">--</td></tr>
+                            <tr><td class="py-1.5 text-white">Embedded (Solar)</td><td class="py-1.5 text-white font-mono text-right" id="brk-emb">--</td></tr>
+                            <tr><td class="py-1.5 text-ui-light">Exports</td><td class="py-1.5 text-ui-light font-mono text-right" id="brk-exp">--</td></tr>
+                            <tr><td class="py-1.5 text-ui-light">Pumped Storage</td><td class="py-1.5 text-ui-light font-mono text-right" id="brk-psh">--</td></tr>
+                            <tr><td class="py-1.5 text-ui-light border-b border-ui-grey/50">Station Load</td><td class="py-1.5 text-ui-light font-mono text-right border-b border-ui-grey/50" id="brk-stat">0.50</td></tr>
+                            <tr><td class="py-3 text-white font-bold" id="lbl-nat">National Demand</td><td class="py-3 text-white font-mono font-bold text-right" id="brk-nat">--</td></tr>
+                            <tr><td class="py-3 text-white font-bold" id="lbl-net">Actual Demand Net</td><td class="py-3 text-white font-mono font-bold text-right" id="brk-net">--</td></tr>
+                            <tr><td class="py-3 text-white font-bold" id="lbl-gro">Actual Demand Gross</td><td class="py-3 text-white font-mono font-bold text-right" id="brk-gro">--</td></tr>
+                        </table>
+                    </div>
+                </div>
+            </section>
+
+            <section class="grid grid-cols-1 lg:grid-cols-5 gap-6">
+                <div class="lg:col-span-3 bg-ui-card p-6 rounded-2xl border border-ui-grey shadow-lg flex flex-col">
+                    <div class="flex justify-between items-end mb-6">
+                        <div class="flex items-center gap-2">
+                            <h3 class="text-xl font-bold text-white">Interconnector Detail</h3>
+                            <button onclick="openInterconnectorModal()" class="w-5 h-5 rounded-full bg-ui-grey/50 text-white flex items-center justify-center italic text-[10px] hover:bg-brand-cyan hover:text-ui-darkest transition font-bold cursor-pointer">i</button>
+                        </div>
+                        <div class="bg-ui-darkest rounded-lg p-1 border border-ui-grey flex text-sm">
+                            <button id="btn-ic-gw" onclick="setInterconnectorMode('GW')" class="px-3 py-1 rounded bg-ui-grey text-white font-semibold transition">GW</button>
+                            <button id="btn-ic-perc" onclick="setInterconnectorMode('%')" class="px-3 py-1 rounded text-ui-light hover:text-white transition">%</button>
+                        </div>
+                    </div>
+                    <div class="flex-grow h-[400px] w-full relative"><canvas id="interconnectorChart"></canvas></div>
+                </div>
+                <div class="lg:col-span-2 bg-ui-card p-6 rounded-2xl border border-ui-grey shadow-lg flex flex-col">
+                    <h3 class="text-xl font-bold text-white mb-6">Carbon Trend (gCO₂)</h3>
+                    <div class="flex-grow h-[400px] w-full relative"><canvas id="carbonHistoryChart"></canvas></div>
+                </div>
+            </section>
+        </div>
+
+    </main>
+
+    <footer class="bg-ui-darkest border-t border-ui-grey py-12 mt-10">
+        <div class="max-w-[1500px] mx-auto px-4 sm:px-6 lg:px-8 grid grid-cols-1 md:grid-cols-3 gap-8 text-sm">
+            <div class="flex flex-col gap-4 text-ui-light">
+                <p class="font-bold text-white text-base">© tdcat.com <span id="footer-year">2026</span></p>
+                <p>Contact me if you would<br>like to collaborate or for<br>product reviews</p>
+                <a href="https://tdcat.com/contact" class="text-brand-cyan hover:text-white transition font-semibold">Contact Me →</a>
+            </div>
+            <div class="flex flex-col gap-3">
+                <h4 class="font-bold text-white text-base mb-1">Useful Links</h4>
+                <a id="link-use-1" href="#" class="text-ui-light hover:text-white hover:underline transition hidden"></a>
+                <a id="link-use-2" href="#" class="text-ui-light hover:text-white hover:underline transition hidden"></a>
+                <a id="link-use-3" href="#" class="text-ui-light hover:text-white hover:underline transition hidden"></a>
+                <a id="link-use-4" href="#" class="text-ui-light hover:text-white hover:underline transition hidden"></a>
+            </div>
+            <div class="flex flex-col gap-3">
+                <h4 class="font-bold text-white text-base mb-1">Follow</h4>
+                <a id="link-fol-1" href="#" class="text-ui-light hover:text-white hover:underline transition hidden"></a>
+                <a id="link-fol-2" href="#" class="text-ui-light hover:text-white hover:underline transition hidden"></a>
+                <a id="link-fol-3" href="#" class="text-ui-light hover:text-white hover:underline transition hidden"></a>
+            </div>
+        </div>
+    </footer>
+<div id="custom-tooltip" class="fixed pointer-events-none z-[100] hidden opacity-0 transition-opacity duration-200 bg-[rgba(0,0,0,0.8)] backdrop-blur-sm border border-ui-grey text-white text-xs rounded-lg p-3 shadow-xl leading-relaxed"></div>
+    <script src="/static/script.js"></script>
+</body>
+</html>

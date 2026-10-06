@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://energy.tdcat.com/sitemap.xml

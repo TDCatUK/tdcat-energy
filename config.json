@@ -1,0 +1,134 @@
+{
+    "theme": {
+        "brand_cyan": "#30c5d5",
+        "brand_orange": "#f6643c",
+        "octo_pink": "#f050f8",
+        "tesla_green": "#00d241"
+    },
+    "octopus": {
+        "color_imp": "#5840ff",
+        "color_exp": "#f050f8"
+    },
+    "powerwall": {
+        "solar_efficiency": 96.6
+    },
+    "flow": {
+        "hv_gen": "#f6643c",
+        "total": "#30c5d5",
+        "storage": "#30c5d5",
+        "demand": "#d4d4d8",
+        "exports": "#ff00a0",
+        "bg_color": "#252529",
+        "speed_mode": "relative",
+        "base_speed": 5,
+        "dot_size": 5,
+        "icons": {
+            "sol": "fa-solid fa-solar-panel",
+            "imp": "fa-solid fa-earth-europe",
+            "hv": "fa-solid fa-industry",
+            "wind": "fa-solid fa-fan",
+            "psh": "fa-solid fa-battery-half",
+            "dem": "fa-solid fa-house",
+            "exp": "fa-solid fa-arrow-up-from-bracket"
+        }
+    },
+    "map_nodes": {
+        "uk": {
+            "x": 500,
+            "y": 460
+        },
+        "ire": {
+            "x": 320,
+            "y": 460
+        },
+        "fra": {
+            "x": 580,
+            "y": 680
+        },
+        "bel": {
+            "x": 720,
+            "y": 590
+        },
+        "ned": {
+            "x": 780,
+            "y": 480
+        },
+        "den": {
+            "x": 900,
+            "y": 330
+        },
+        "nor": {
+            "x": 800,
+            "y": 200
+        }
+    },
+    "fuels": {
+        "lv_wind": "#5db332",
+        "wind": "#137c40",
+        "solar": "#ffd700",
+        "hydro": "#8cb6e8",
+        "pumped_storage": "#274e9b",
+        "biomass": "#8b4513",
+        "nuclear": "#a1a1aa",
+        "imports": "#30c5d5",
+        "other": "#474747",
+        "ocg": "#9a3412",
+        "ccgt": "#f6643c"
+    },
+    "carbon": {
+        "low": "#4ade80",
+        "med": "#f6643c",
+        "high": "#ef4444"
+    },
+    "gradients": {
+        "temp_hot": "#ef4444",
+        "temp_cold": "#3b82f6"
+    },
+    "price": {
+        "color_low": "#4ade80",
+        "color_med": "#f6643c",
+        "color_high": "#ef4444",
+        "thresh_low": 70,
+        "thresh_high": 140
+    },
+    "mi_price": {
+        "color_low": "#4ade80",
+        "color_med": "#3b82f6",
+        "color_high": "#ef4444",
+        "thresh_low": 50,
+        "thresh_high": 120
+    },
+    "niv": {
+        "color_short": "#f6643c",
+        "color_long": "#30c5d5"
+    },
+    "demand": {
+        "national": "#d4d4d8",
+        "transmission": "#60a5fa",
+        "net": "#fdba74",
+        "gross": "#ef4444",
+        "dashed": "#ffffff"
+    },
+    "frequency": {
+        "color_target": "#30c5d5",
+        "color_limit": "#f6643c",
+        "thresh_low": 49.8,
+        "thresh_high": 50.2
+    },
+    "footer": {
+        "use1_text": "tdcat.com",
+        "use1_url": "https://tdcat.com",
+        "use2_text": "Elexon",
+        "use2_url": "https://www.elexon.co.uk",
+        "use3_text": "Octopus Energy",
+        "use3_url": "https://geni.us/octopustdcat",
+        "use4_text": "National Grid Live",
+        "use4_url": "https://grid.iamkate.com",
+        "fol1_text": "YouTube",
+        "fol1_url": "https://youtube.com/tdcatvideo",
+        "fol2_text": "Instagram",
+        "fol2_url": "https://instagram.com/tdcatcom",
+        "fol3_text": "X",
+        "fol3_url": "https://x.com/tdcatuk"
+    }
+}

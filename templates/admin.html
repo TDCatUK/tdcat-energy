@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Theme Settings | energy.tdcat.com</title>
+    <link rel="icon" type="image/png" href="/static/favicon.png">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script>
+        tailwind.config = { theme: { extend: { colors: { 'brand-cyan': '#30C5D5', 'ui-darkest': '#000000', 'ui-dark': '#1C1C1F', 'ui-card': '#252529', 'ui-grey': '#3F3F46', 'ui-light': '#D4D4D8' } } } }
+    </script>
+    <style> 
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap'); 
+        body { font-family: 'Inter', sans-serif; } 
+    </style>
+</head>
+<body class="bg-ui-dark text-white min-h-screen relative pb-10">
+
+    <header class="bg-ui-darkest border-b border-ui-grey p-4 sticky top-0 z-40">
+        <div class="max-w-[1000px] mx-auto flex items-center justify-between">
+            <div class="flex items-center gap-3">
+                <img src="/static/logo.png" alt="Logo" class="h-8 object-contain" onerror="this.outerHTML='<div class=\'w-8 h-8 bg-brand-cyan rounded-md flex items-center justify-center text-ui-darkest font-bold\'>TD</div>'">
+                <h1 class="text-2xl font-bold text-ui-light">Dashboard Settings</h1>
+            </div>
+            <a href="/" class="text-sm font-semibold text-brand-cyan hover:text-white transition">← Back to Dashboard</a>
+        </div>
+    </header>
+
+    <main class="max-w-[1000px] mx-auto px-4 mt-10 space-y-10">
+        
+        <section class="bg-ui-card p-8 rounded-2xl border border-ui-grey shadow-lg">
+            <h2 class="text-xl font-bold text-white mb-6 border-b border-ui-grey pb-4">Core Theme Colors</h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4" id="theme-inputs"></div>
+        </section>
+
+        <section class="bg-ui-card p-8 rounded-2xl border border-[#30C5D5] shadow-lg">
+            <h2 class="text-xl font-bold text-white mb-6 border-b border-ui-grey pb-4">Live Flow Settings</h2>
+            
+            <h3 class="text-brand-cyan font-bold mb-4 mt-2">Node Colors</h3>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4" id="flow-color-inputs"></div>
+            
+            <h3 class="text-brand-cyan font-bold mb-4 mt-6 flex items-center gap-2">
+                Node Icons 
+                <span class="text-xs font-normal text-ui-light ml-2">(Find free icons at <a href="https://fontawesome.com/search?m=free" target="_blank" class="text-white hover:text-brand-cyan hover:underline transition">fontawesome.com</a>)</span>
+            </h3>
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-4" id="flow-icon-inputs"></div>
+
+            <h3 class="text-brand-cyan font-bold mb-4 mt-6">Animation & Styling</h3>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div class="flex items-center justify-between p-3 bg-ui-darkest rounded-lg border border-ui-grey/50">
+                    <span class="font-semibold text-ui-light tracking-wide uppercase text-sm">BG Color</span>
+                    <input type="color" id="flow_bg" class="w-12 h-8 rounded cursor-pointer bg-transparent border-0 p-0">
+                </div>
+                <div class="flex items-center justify-between p-3 bg-ui-darkest rounded-lg border border-ui-grey/50">
+                    <span class="font-semibold text-ui-light tracking-wide uppercase text-sm">Dot Size</span>
+                    <input type="number" step="0.5" id="flow_dot_size" class="w-16 bg-ui-card border border-ui-grey rounded p-1 text-center text-white font-bold">
+                </div>
+                <div class="flex items-center justify-between p-3 bg-ui-darkest rounded-lg border border-ui-grey/50">
+                    <span class="font-semibold text-ui-light tracking-wide uppercase text-sm">Speed Mode</span>
+                    <select id="flow_speed_mode" class="bg-ui-card border border-ui-grey rounded p-1.5 text-white font-bold text-sm">
+                        <option value="relative">Energy Dependent</option>
+                        <option value="uniform">Uniform</option>
+                    </select>
+                </div>
+                <div class="flex flex-col p-4 bg-ui-darkest rounded-lg border border-ui-grey/50 col-span-1 md:col-span-3">
+                    <div class="flex justify-between items-center mb-4">
+                        <span class="font-semibold text-ui-light tracking-wide uppercase text-sm">Base Animation Speed</span>
+                        <span id="speed_val_display" class="text-brand-cyan font-bold text-lg">5</span>
+                    </div>
+                    <input type="range" id="flow_base_speed" min="1" max="10" step="1" class="w-full accent-brand-cyan cursor-pointer" oninput="document.getElementById('speed_val_display').innerText=this.value">
+                </div>
+            </div>
+
+            <h3 class="text-brand-cyan font-bold mb-4 mt-6">Interconnector Map Coordinates (X, Y)</h3>
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-4" id="flow-map-inputs"></div>
+        </section>
+
+        <section class="bg-ui-card p-8 rounded-2xl border border-octo-pink shadow-lg">
+            <h2 class="text-xl font-bold text-white mb-6 border-b border-ui-grey pb-4">Octopus Energy Colors</h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4" id="octo-color-inputs"></div>
+        </section>
+
+        <section class="bg-ui-card p-8 rounded-2xl border border-brand-orange shadow-lg">
+            <h2 class="text-xl font-bold text-white mb-6 border-b border-ui-grey pb-4">Wholesale Price (Balancing)</h2>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6" id="price-color-inputs"></div>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4" id="price-thresh-inputs">
+                <div class="flex items-center justify-between p-3 bg-ui-darkest rounded-lg border border-ui-grey/50 hover:border-brand-orange transition">
+                    <span class="font-semibold text-ui-light tracking-wide uppercase text-sm">Low Threshold (£)</span>
+                    <input type="number" id="thresh_low" class="w-16 bg-ui-card border border-ui-grey rounded p-1 text-center text-white font-bold">
+                </div>
+                <div class="flex items-center justify-between p-3 bg-ui-darkest rounded-lg border border-ui-grey/50 hover:border-brand-orange transition">
+                    <span class="font-semibold text-ui-light tracking-wide uppercase text-sm">High Threshold (£)</span>
+                    <input type="number" id="thresh_high" class="w-16 bg-ui-card border border-ui-grey rounded p-1 text-center text-white font-bold">
+                </div>
+            </div>
+        </section>
+
+        <section class="bg-ui-card p-8 rounded-2xl border border-[#3B82F6] shadow-lg">
+            <h2 class="text-xl font-bold text-white mb-6 border-b border-ui-grey pb-4">Market Index Price</h2>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6" id="mi-price-color-inputs"></div>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4" id="mi-price-thresh-inputs">
+                <div class="flex items-center justify-between p-3 bg-ui-darkest rounded-lg border border-ui-grey/50 hover:border-[#3B82F6] transition">
+                    <span class="font-semibold text-ui-light tracking-wide uppercase text-sm">Low Threshold (£)</span>
+                    <input type="number" id="mi_thresh_low" class="w-16 bg-ui-card border border-ui-grey rounded p-1 text-center text-white font-bold">
+                </div>
+                <div class="flex items-center justify-between p-3 bg-ui-darkest rounded-lg border border-ui-grey/50 hover:border-[#3B82F6] transition">
+                    <span class="font-semibold text-ui-light tracking-wide uppercase text-sm">High Threshold (£)</span>
+                    <input type="number" id="mi_thresh_high" class="w-16 bg-ui-card border border-ui-grey rounded p-1 text-center text-white font-bold">
+                </div>
+            </div>
+        </section>
+
+        <section class="bg-ui-card p-8 rounded-2xl border border-ui-grey shadow-lg">
+            <h2 class="text-xl font-bold text-white mb-6 border-b border-ui-grey pb-4">Grid Frequency Limits</h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6" id="freq-color-inputs"></div>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4" id="freq-thresh-inputs">
+                <div class="flex items-center justify-between p-3 bg-ui-darkest rounded-lg border border-ui-grey/50 hover:border-ui-light transition">
+                    <span class="font-semibold text-ui-light tracking-wide uppercase text-sm">Lower Limit (Hz)</span>
+                    <input type="number" step="0.01" id="freq_thresh_low" class="w-20 bg-ui-card border border-ui-grey rounded p-1 text-center text-white font-bold">
+                </div>
+                <div class="flex items-center justify-between p-3 bg-ui-darkest rounded-lg border border-ui-grey/50 hover:border-ui-light transition">
+                    <span class="font-semibold text-ui-light tracking-wide uppercase text-sm">Upper Limit (Hz)</span>
+                    <input type="number" step="0.01" id="freq_thresh_high" class="w-20 bg-ui-card border border-ui-grey rounded p-1 text-center text-white font-bold">
+                </div>
+            </div>
+        </section>
+
+        <section class="bg-ui-card p-8 rounded-2xl border border-ui-grey shadow-lg">
+            <h2 class="text-xl font-bold text-white mb-6 border-b border-ui-grey pb-4">System Imbalance (NIV)</h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4" id="niv-color-inputs"></div>
+        </section>
+
+        <section class="bg-ui-card p-8 rounded-2xl border border-ui-grey shadow-lg">
+            <h2 class="text-xl font-bold text-white mb-6 border-b border-ui-grey pb-4">Generation Fuel Colors</h2>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4" id="fuel-inputs"></div>
+        </section>
+
+        <section class="bg-ui-card p-8 rounded-2xl border border-ui-grey shadow-lg">
+            <h2 class="text-xl font-bold text-white mb-6 border-b border-ui-grey pb-4">4 Levels of Demand Colors</h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4" id="demand-inputs"></div>
+        </section>
+
+        <section class="bg-ui-card p-8 rounded-2xl border border-ui-grey shadow-lg">
+            <h2 class="text-xl font-bold text-white mb-6 border-b border-ui-grey pb-4">Carbon Impact Colors</h2>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4" id="carbon-inputs"></div>
+        </section>
+
+        <section class="bg-ui-card p-8 rounded-2xl border border-ui-grey shadow-lg">
+            <h2 class="text-xl font-bold text-white mb-6 border-b border-ui-grey pb-4">Chart Gradients (Temperature)</h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4" id="grad-inputs"></div>
+        </section>
+
+        <section class="bg-ui-card p-8 rounded-2xl border border-ui-grey shadow-lg">
+            <h2 class="text-xl font-bold text-white mb-6 border-b border-ui-grey pb-4">System Parameters</h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4" id="sys-inputs">
+                <div class="flex items-center justify-between p-3 bg-ui-darkest rounded-lg border border-ui-grey/50 hover:border-ui-light transition">
+                    <span class="font-semibold text-ui-light tracking-wide uppercase text-sm">Solar Efficiency (%)</span>
+                    <input type="number" step="0.1" id="pw_solar_eff" class="w-20 bg-ui-card border border-ui-grey rounded p-1 text-center text-white font-bold">
+                </div>
+            </div>
+        </section>
+
+        <section class="bg-ui-card p-8 rounded-2xl border border-ui-grey shadow-lg">
+            <h2 class="text-xl font-bold text-white mb-6 border-b border-ui-grey pb-4">Footer Settings</h2>
+            
+            <h3 class="text-brand-cyan font-bold mb-4 mt-2">Useful Links</h3>
+            <div class="grid grid-cols-1 gap-4 mb-8" id="footer-useful-inputs"></div>
+            
+            <h3 class="text-brand-cyan font-bold mb-4">Follow Links</h3>
+            <div class="grid grid-cols-1 gap-4" id="footer-follow-inputs"></div>
+        </section>
+
+        <div class="flex justify-between items-center mt-8">
+            <button onclick="resetDefaults()" class="px-6 py-3 bg-ui-dark rounded-xl text-ui-light border border-ui-grey hover:bg-[#EF4444] hover:text-white hover:border-[#EF4444] transition font-bold">Reset to Defaults</button>
+            <div class="flex items-center gap-4">
+                <span id="toast" class="text-[#10B981] font-bold opacity-0 transition-opacity duration-300">Saved Successfully!</span>
+                <button onclick="saveConfig()" class="px-8 py-3 bg-brand-cyan rounded-xl text-ui-darkest hover:bg-white transition font-bold shadow-lg">Save Configuration</button>
+            </div>
+        </div>
+
+    </main>
+
+    <script>
+        const DEFAULT_CONFIG = {
+            "theme": { "brand_cyan": "#30C5D5", "brand_orange": "#F6643C", "octo_pink": "#FF00A0", "tesla_green": "#00D241" },
+            "octopus": { "color_imp": "#FF00A0", "color_exp": "#FF00A0" },
+            "powerwall": { "solar_efficiency": 95.5 },
+            "flow": { "hv_gen": "#F6643C", "total": "#30C5D5", "storage": "#30C5D5", "demand": "#D4D4D8", "exports": "#FF00A0", "bg_color": "#000000", "speed_mode": "relative", "base_speed": 5, "dot_size": 2.5, "icons": { "sol": "fa-solid fa-sun", "imp": "fa-solid fa-earth-europe", "hv": "fa-solid fa-industry", "wind": "fa-solid fa-wind", "psh": "fa-solid fa-battery-half", "dem": "fa-solid fa-house", "exp": "fa-solid fa-file-export" } },
+            "map_nodes": { "uk": {"x": 460, "y": 460}, "ire": {"x": 280, "y": 460}, "fra": {"x": 510, "y": 680}, "bel": {"x": 610, "y": 600}, "ned": {"x": 650, "y": 520}, "den": {"x": 800, "y": 380}, "nor": {"x": 680, "y": 200} },
+            "fuels": { "wind": "#10B981", "lv_wind": "#5FB035", "solar": "#FFD700", "hydro": "#60A5FA", "pumped_storage": "#30C5D5", "biomass": "#8B4513", "nuclear": "#A1A1AA", "imports": "#64748B", "other": "#A855F7", "ocg": "#9A3412", "ccgt": "#F6643C" },
+            "gradients": { "temp_hot": "#EF4444", "temp_cold": "#3B82F6" },
+            "carbon": { "low": "#4ADE80", "med": "#F6643C", "high": "#EF4444" },
+            "price": { "color_low": "#4ADE80", "color_med": "#F6643C", "color_high": "#EF4444", "thresh_low": 50, "thresh_high": 120 },
+            "mi_price": { "color_low": "#4ADE80", "color_med": "#3B82F6", "color_high": "#EF4444", "thresh_low": 50, "thresh_high": 120 },
+            "niv": { "color_short": "#F6643C", "color_long": "#30C5D5" },
+            "demand": { "national": "#D4D4D8", "transmission": "#60A5FA", "net": "#FDBA74", "gross": "#EF4444", "dashed": "#FFFFFF" },
+            "frequency": { "color_target": "#30C5D5", "color_limit": "#F6643C", "thresh_low": 49.8, "thresh_high": 50.2 },
+            "footer": { "use1_text": "Pexels Stock Photos", "use1_url": "#", "use2_text": "Rod Allsopp", "use2_url": "#", "use3_text": "OpenWRT", "use3_url": "#", "use4_text": "Love Your Libraries", "use4_url": "#", "fol1_text": "Twitter", "fol1_url": "#", "fol2_text": "Instagram", "fol2_url": "#", "fol3_text": "Patreon", "fol3_url": "#" }
+        };
+
+        const LEGACY_ICONS = {
+            'sun': 'fa-solid fa-sun',
+            'globe': 'fa-solid fa-earth-europe',
+            'factory': 'fa-solid fa-industry',
+            'wind': 'fa-solid fa-wind',
+            'battery': 'fa-solid fa-battery-half',
+            'home': 'fa-solid fa-house',
+            'export': 'fa-solid fa-file-export'
+        };
+
+        function getValidIcon(val) {
+            if (!val) return 'fa-solid fa-circle';
+            if (val.includes('fa-')) return val;
+            return LEGACY_ICONS[val] || 'fa-solid fa-' + val;
+        }
+
+        function createInput(id, label, value, containerId) {
+            const wrapper = document.createElement('div');
+            wrapper.className = "flex items-center justify-between p-3 bg-ui-darkest rounded-lg border border-ui-grey/50 hover:border-ui-light transition";
+            wrapper.innerHTML = `<span class="font-semibold text-ui-light tracking-wide uppercase text-sm">${label}</span><input type="color" id="${id}" value="${value}" class="w-12 h-8 rounded cursor-pointer bg-transparent border-0 p-0">`;
+            document.getElementById(containerId).appendChild(wrapper);
+        }
+
+        function createIconInput(id, label, value, containerId) {
+            const wrapper = document.createElement('div');
+            wrapper.className = "flex flex-col gap-2 p-3 bg-ui-darkest rounded-lg border border-ui-grey/50 hover:border-ui-light transition";
+            
+            let displayVal = getValidIcon(value);
+
+            wrapper.innerHTML = `
+                <span class="font-semibold text-ui-light tracking-wide uppercase text-sm">${label}</span>
+                <div class="flex items-center gap-3">
+                    <i class="${displayVal} text-ui-light text-lg w-5 text-center"></i>
+                    <input type="text" id="icon_${id}" value="${displayVal}" class="flex-1 bg-ui-card border border-ui-grey rounded p-1.5 text-white font-mono text-xs">
+                </div>
+            `;
+            document.getElementById(containerId).appendChild(wrapper);
+
+            const inputEl = wrapper.querySelector('input');
+            const iconEl = wrapper.querySelector('i');
+            inputEl.addEventListener('input', (e) => {
+                iconEl.className = e.target.value + ' text-ui-light text-lg w-5 text-center';
+            });
+        }
+
+        function createCoordInput(idPrefix, label, xVal, yVal, containerId) {
+            const wrapper = document.createElement('div');
+            wrapper.className = "flex flex-col gap-2 p-3 bg-ui-darkest rounded-lg border border-ui-grey/50 hover:border-ui-light transition";
+            wrapper.innerHTML = `
+                <span class="font-semibold text-ui-light tracking-wide uppercase text-sm">${label}</span>
+                <div class="flex items-center gap-2">
+                    <span class="text-ui-grey text-xs font-bold">X</span>
+                    <input type="number" id="map_${idPrefix}_x" value="${xVal}" class="w-16 bg-ui-card border border-ui-grey rounded p-1 text-white text-center text-sm font-bold">
+                    <span class="text-ui-grey text-xs font-bold ml-2">Y</span>
+                    <input type="number" id="map_${idPrefix}_y" value="${yVal}" class="w-16 bg-ui-card border border-ui-grey rounded p-1 text-white text-center text-sm font-bold">
+                </div>
+            `;
+            document.getElementById(containerId).appendChild(wrapper);
+        }
+
+        function createLinkInput(idPrefix, textVal, urlVal, containerId) {
+            const wrapper = document.createElement('div');
+            wrapper.className = "flex items-center gap-4 p-3 bg-ui-darkest rounded-lg border border-ui-grey/50";
+            wrapper.innerHTML = `
+                <input type="text" id="${idPrefix}_text" value="${textVal}" placeholder="Link Text" class="flex-1 bg-ui-card border border-ui-grey rounded p-2 text-white text-sm">
+                <input type="text" id="${idPrefix}_url" value="${urlVal}" placeholder="https://" class="flex-1 bg-ui-card border border-ui-grey rounded p-2 text-white text-sm font-mono">
+            `;
+            document.getElementById(containerId).appendChild(wrapper);
+        }
+
+        function renderInputs(config) {
+            document.getElementById('theme-inputs').innerHTML = ''; document.getElementById('flow-color-inputs').innerHTML = ''; document.getElementById('flow-icon-inputs').innerHTML = ''; document.getElementById('flow-map-inputs').innerHTML = ''; document.getElementById('octo-color-inputs').innerHTML = ''; document.getElementById('fuel-inputs').innerHTML = ''; document.getElementById('carbon-inputs').innerHTML = ''; document.getElementById('grad-inputs').innerHTML = ''; document.getElementById('price-color-inputs').innerHTML = ''; document.getElementById('mi-price-color-inputs').innerHTML = ''; document.getElementById('freq-color-inputs').innerHTML = ''; document.getElementById('niv-color-inputs').innerHTML = ''; document.getElementById('demand-inputs').innerHTML = ''; document.getElementById('footer-useful-inputs').innerHTML = ''; document.getElementById('footer-follow-inputs').innerHTML = '';
+
+            createInput('theme_brand_cyan', 'Primary Cyan', config.theme.brand_cyan, 'theme-inputs');
+            createInput('theme_brand_orange', 'Primary Orange', config.theme.brand_orange, 'theme-inputs');
+            createInput('theme_octo_pink', 'Octopus Pink', config.theme.octo_pink, 'theme-inputs');
+            createInput('theme_tesla_green', 'Tesla Green', config.theme.tesla_green, 'theme-inputs');
+
+            createInput('flow_hv', 'HV Generation', config.flow.hv_gen, 'flow-color-inputs');
+            createInput('flow_tot', 'Total Output', config.flow.total, 'flow-color-inputs');
+            createInput('flow_stor', 'Storage', config.flow.storage, 'flow-color-inputs');
+            createInput('flow_dem', 'Demand', config.flow.demand, 'flow-color-inputs');
+            createInput('flow_exp', 'Exports', config.flow.exports, 'flow-color-inputs');
+            
+            document.getElementById('flow_bg').value = config.flow.bg_color || '#000000';
+            document.getElementById('flow_speed_mode').value = config.flow.speed_mode || 'relative';
+            document.getElementById('flow_base_speed').value = config.flow.base_speed || 5;
+            document.getElementById('flow_dot_size').value = config.flow.dot_size || 2.5;
+            document.getElementById('speed_val_display').innerText = config.flow.base_speed || 5;
+            
+            document.getElementById('pw_solar_eff').value = (config.powerwall && config.powerwall.solar_efficiency) ? config.powerwall.solar_efficiency : 95.5;
+
+            createIconInput('sol', 'Solar', config.flow.icons?.sol || 'fa-solid fa-sun', 'flow-icon-inputs');
+            createIconInput('imp', 'Imports', config.flow.icons?.imp || 'fa-solid fa-earth-europe', 'flow-icon-inputs');
+            createIconInput('hv', 'HV Gen', config.flow.icons?.hv || 'fa-solid fa-industry', 'flow-icon-inputs');
+            createIconInput('wind', 'Wind Node (HV & LV)', config.flow.icons?.wind || 'fa-solid fa-wind', 'flow-icon-inputs');
+            createIconInput('psh', 'Storage', config.flow.icons?.psh || 'fa-solid fa-battery-half', 'flow-icon-inputs');
+            createIconInput('dem', 'Demand', config.flow.icons?.dem || 'fa-solid fa-house', 'flow-icon-inputs');
+            createIconInput('exp', 'Exports', config.flow.icons?.exp || 'fa-solid fa-file-export', 'flow-icon-inputs');
+
+            let mn = config.map_nodes || DEFAULT_CONFIG.map_nodes;
+            createCoordInput('uk', 'UK', mn.uk.x, mn.uk.y, 'flow-map-inputs');
+            createCoordInput('ire', 'Ireland', mn.ire.x, mn.ire.y, 'flow-map-inputs');
+            createCoordInput('fra', 'France', mn.fra.x, mn.fra.y, 'flow-map-inputs');
+            createCoordInput('bel', 'Belgium', mn.bel.x, mn.bel.y, 'flow-map-inputs');
+            createCoordInput('ned', 'Netherlands', mn.ned.x, mn.ned.y, 'flow-map-inputs');
+            createCoordInput('den', 'Denmark', mn.den.x, mn.den.y, 'flow-map-inputs');
+            createCoordInput('nor', 'Norway', mn.nor.x, mn.nor.y, 'flow-map-inputs');
+
+            createInput('octo_imp', 'Import Line Color', config.octopus.color_imp, 'octo-color-inputs');
+            createInput('octo_exp', 'Export Line Color', config.octopus.color_exp, 'octo-color-inputs');
+
+            createInput('price_low', 'Price Low Color', config.price.color_low, 'price-color-inputs');
+            createInput('price_med', 'Price Med Color', config.price.color_med, 'price-color-inputs');
+            createInput('price_high', 'Price High Color', config.price.color_high, 'price-color-inputs');
+            document.getElementById('thresh_low').value = config.price.thresh_low;
+            document.getElementById('thresh_high').value = config.price.thresh_high;
+
+            createInput('mi_price_low', 'MI Price Low Color', config.mi_price.color_low, 'mi-price-color-inputs');
+            createInput('mi_price_med', 'MI Price Med Color', config.mi_price.color_med, 'mi-price-color-inputs');
+            createInput('mi_price_high', 'MI Price High Color', config.mi_price.color_high, 'mi-price-color-inputs');
+            document.getElementById('mi_thresh_low').value = config.mi_price.thresh_low;
+            document.getElementById('mi_thresh_high').value = config.mi_price.thresh_high;
+
+            createInput('freq_color_target', 'Target Line Color', config.frequency?.color_target || '#30C5D5', 'freq-color-inputs');
+            createInput('freq_color_limit', 'Limit Line Color', config.frequency?.color_limit || '#F6643C', 'freq-color-inputs');
+            document.getElementById('freq_thresh_low').value = config.frequency?.thresh_low || 49.8;
+            document.getElementById('freq_thresh_high').value = config.frequency?.thresh_high || 50.2;
+
+            createInput('niv_short', 'System Short (Positive)', config.niv?.color_short || '#F6643C', 'niv-color-inputs');
+            createInput('niv_long', 'System Long (Negative)', config.niv?.color_long || '#30C5D5', 'niv-color-inputs');
+
+            createInput('dem_nat', 'National Demand', config.demand.national, 'demand-inputs');
+            createInput('dem_trans', 'Transmission System', config.demand.transmission, 'demand-inputs');
+            createInput('dem_net', 'Actual Net', config.demand.net, 'demand-inputs');
+            createInput('dem_gross', 'Actual Gross', config.demand.gross, 'demand-inputs');
+            createInput('dem_dash', 'Chart Dashed Overlay', config.demand.dashed, 'demand-inputs');
+
+            for (const [key, val] of Object.entries(config.fuels)) { createInput(`fuel_${key}`, key.replace('_', ' '), val, 'fuel-inputs'); }
+
+            createInput('carbon_low', 'Low Intensity (<100)', config.carbon.low, 'carbon-inputs');
+            createInput('carbon_med', 'Med Intensity (100-200)', config.carbon.med, 'carbon-inputs');
+            createInput('carbon_high', 'High Intensity (>200)', config.carbon.high, 'carbon-inputs');
+
+            createInput('grad_temp_hot', 'Temp Hot (Top)', config.gradients.temp_hot, 'grad-inputs');
+            createInput('grad_temp_cold', 'Temp Cold (Bottom)', config.gradients.temp_cold, 'grad-inputs');
+
+            createLinkInput('foot_use1', config.footer.use1_text, config.footer.use1_url, 'footer-useful-inputs');
+            createLinkInput('foot_use2', config.footer.use2_text, config.footer.use2_url, 'footer-useful-inputs');
+            createLinkInput('foot_use3', config.footer.use3_text, config.footer.use3_url, 'footer-useful-inputs');
+            createLinkInput('foot_use4', config.footer.use4_text, config.footer.use4_url, 'footer-useful-inputs');
+            
+            createLinkInput('foot_fol1', config.footer.fol1_text, config.footer.fol1_url, 'footer-follow-inputs');
+            createLinkInput('foot_fol2', config.footer.fol2_text, config.footer.fol2_url, 'footer-follow-inputs');
+            createLinkInput('foot_fol3', config.footer.fol3_text, config.footer.fol3_url, 'footer-follow-inputs');
+        }
+
+        async function loadConfig() {
+            const res = await fetch('/api/config');
+            const data = await res.json();
+            renderInputs(data);
+        }
+
+        async function saveConfig() {
+            const payload = {
+                theme: { brand_cyan: document.getElementById('theme_brand_cyan').value, brand_orange: document.getElementById('theme_brand_orange').value, octo_pink: document.getElementById('theme_octo_pink').value, tesla_green: document.getElementById('theme_tesla_green').value },
+                octopus: { color_imp: document.getElementById('octo_imp').value, color_exp: document.getElementById('octo_exp').value },
+                powerwall: { solar_efficiency: parseFloat(document.getElementById('pw_solar_eff').value) },
+                flow: { 
+                    hv_gen: document.getElementById('flow_hv').value, 
+                    total: document.getElementById('flow_tot').value, 
+                    storage: document.getElementById('flow_stor').value, 
+                    demand: document.getElementById('flow_dem').value, 
+                    exports: document.getElementById('flow_exp').value,
+                    bg_color: document.getElementById('flow_bg').value,
+                    speed_mode: document.getElementById('flow_speed_mode').value,
+                    base_speed: parseInt(document.getElementById('flow_base_speed').value),
+                    dot_size: parseFloat(document.getElementById('flow_dot_size').value),
+                    icons: {
+                        sol: document.getElementById('icon_sol').value,
+                        imp: document.getElementById('icon_imp').value,
+                        hv: document.getElementById('icon_hv').value,
+                        wind: document.getElementById('icon_wind').value,
+                        psh: document.getElementById('icon_psh').value,
+                        dem: document.getElementById('icon_dem').value,
+                        exp: document.getElementById('icon_exp').value
+                    }
+                },
+                map_nodes: {
+                    uk: { x: parseInt(document.getElementById('map_uk_x').value), y: parseInt(document.getElementById('map_uk_y').value) },
+                    ire: { x: parseInt(document.getElementById('map_ire_x').value), y: parseInt(document.getElementById('map_ire_y').value) },
+                    fra: { x: parseInt(document.getElementById('map_fra_x').value), y: parseInt(document.getElementById('map_fra_y').value) },
+                    bel: { x: parseInt(document.getElementById('map_bel_x').value), y: parseInt(document.getElementById('map_bel_y').value) },
+                    ned: { x: parseInt(document.getElementById('map_ned_x').value), y: parseInt(document.getElementById('map_ned_y').value) },
+                    den: { x: parseInt(document.getElementById('map_den_x').value), y: parseInt(document.getElementById('map_den_y').value) },
+                    nor: { x: parseInt(document.getElementById('map_nor_x').value), y: parseInt(document.getElementById('map_nor_y').value) }
+                },
+                fuels: { lv_wind: document.getElementById('fuel_lv_wind').value, wind: document.getElementById('fuel_wind').value, solar: document.getElementById('fuel_solar').value, hydro: document.getElementById('fuel_hydro').value, pumped_storage: document.getElementById('fuel_pumped_storage').value, biomass: document.getElementById('fuel_biomass').value, nuclear: document.getElementById('fuel_nuclear').value, imports: document.getElementById('fuel_imports').value, other: document.getElementById('fuel_other').value, ocg: document.getElementById('fuel_ocg').value, ccgt: document.getElementById('fuel_ccgt').value },
+                carbon: { low: document.getElementById('carbon_low').value, med: document.getElementById('carbon_med').value, high: document.getElementById('carbon_high').value },
+                gradients: { temp_hot: document.getElementById('grad_temp_hot').value, temp_cold: document.getElementById('grad_temp_cold').value },
+                price: { color_low: document.getElementById('price_low').value, color_med: document.getElementById('price_med').value, color_high: document.getElementById('price_high').value, thresh_low: parseInt(document.getElementById('thresh_low').value), thresh_high: parseInt(document.getElementById('thresh_high').value) },
+                mi_price: { color_low: document.getElementById('mi_price_low').value, color_med: document.getElementById('mi_price_med').value, color_high: document.getElementById('mi_price_high').value, thresh_low: parseInt(document.getElementById('mi_thresh_low').value), thresh_high: parseInt(document.getElementById('mi_thresh_high').value) },
+                niv: { color_short: document.getElementById('niv_short').value, color_long: document.getElementById('niv_long').value },
+                demand: { national: document.getElementById('dem_nat').value, transmission: document.getElementById('dem_trans').value, net: document.getElementById('dem_net').value, gross: document.getElementById('dem_gross').value, dashed: document.getElementById('dem_dash').value },
+                frequency: { 
+                    color_target: document.getElementById('freq_color_target').value, 
+                    color_limit: document.getElementById('freq_color_limit').value, 
+                    thresh_low: parseFloat(document.getElementById('freq_thresh_low').value), 
+                    thresh_high: parseFloat(document.getElementById('freq_thresh_high').value) 
+                },
+                footer: {
+                    use1_text: document.getElementById('foot_use1_text').value, use1_url: document.getElementById('foot_use1_url').value,
+                    use2_text: document.getElementById('foot_use2_text').value, use2_url: document.getElementById('foot_use2_url').value,
+                    use3_text: document.getElementById('foot_use3_text').value, use3_url: document.getElementById('foot_use3_url').value,
+                    use4_text: document.getElementById('foot_use4_text').value, use4_url: document.getElementById('foot_use4_url').value,
+                    fol1_text: document.getElementById('foot_fol1_text').value, fol1_url: document.getElementById('foot_fol1_url').value,
+                    fol2_text: document.getElementById('foot_fol2_text').value, fol2_url: document.getElementById('foot_fol2_url').value,
+                    fol3_text: document.getElementById('foot_fol3_text').value, fol3_url: document.getElementById('foot_fol3_url').value
+                }
+            };
+
+            await fetch('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+            const toast = document.getElementById('toast');
+            toast.classList.remove('opacity-0'); setTimeout(() => toast.classList.add('opacity-0'), 2500);
+        }
+
+        async function resetDefaults() {
+            if(confirm("Are you sure you want to revert all colors to the factory defaults?")) {
+                await fetch('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(DEFAULT_CONFIG) });
+                renderInputs(DEFAULT_CONFIG);
+            }
+        }
+        document.addEventListener('DOMContentLoaded', loadConfig);
+    </script>
+</body>
+</html>

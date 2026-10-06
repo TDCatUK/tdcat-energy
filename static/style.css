@@ -1,0 +1,68 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap'); 
+
+body { 
+    font-family: 'Inter', sans-serif; 
+} 
+
+.hide-scrollbar::-webkit-scrollbar { 
+    display: none; 
+}
+
+.hide-scrollbar { 
+    -ms-overflow-style: none; 
+    scrollbar-width: none; 
+}
+
+/* Map Styles & Animations */
+.map-line { 
+    fill: none; 
+    stroke-width: 5; 
+    stroke-linecap: round; 
+    opacity: 0.8; 
+}
+
+.map-node { 
+    fill: #1C1C1F; 
+    stroke-width: 3; 
+    stroke: #D4D4D8; 
+}
+
+.map-text { 
+    font-family: 'Inter', sans-serif; 
+    fill: #FFFFFF; 
+    font-weight: bold; 
+    font-size: 16px; 
+    text-anchor: middle; 
+}
+
+.map-lbl { 
+    font-family: 'Inter', sans-serif; 
+    fill: #A1A1AA; 
+    font-weight: 600; 
+    font-size: 12px; 
+    text-anchor: middle; 
+    text-transform: uppercase; 
+    letter-spacing: 1px; 
+}
+
+.dash-flow { 
+    stroke-dasharray: 10; 
+}
+
+.anim-import { 
+    animation: flow-import linear infinite; 
+}
+
+.anim-export { 
+    animation: flow-export linear infinite; 
+}
+
+@keyframes flow-import { 
+    from { stroke-dashoffset: 0; } 
+    to { stroke-dashoffset: 20; } 
+}
+
+@keyframes flow-export { 
+    from { stroke-dashoffset: 0; } 
+    to { stroke-dashoffset: -20; } 
+}

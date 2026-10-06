@@ -1,0 +1,28 @@
+# --- Secrets ---
+.env
+.env.*
+.powerwall
+*.pem
+*.key
+# Scratch scripts with hard-coded credentials
+archive/test_pw.py
+archive/visitors.py
+
+# --- Python ---
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# --- Live data / state (written by the running app on OTTO) ---
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.BACKUP
+*.log
+static/forecast.json
+
+# --- OS ---
+.DS_Store
+._*
