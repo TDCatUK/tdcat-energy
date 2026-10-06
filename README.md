@@ -24,4 +24,5 @@ Secrets live in `.env` and `.powerwall`, which are not committed. See `CLAUDE.md
 - Put the project under git and backed it up to GitHub (`TDCatUK/tdcat-energy`).
 - Added `.gitignore` to keep secrets, the virtualenv, caches and live data out of the repo.
 - Added this README and `CLAUDE.md` (handover notes).
+- Octopus data is working again with the new API key (it had been 0 since 30 Sep, 16:55 UTC). Confirmed on the 12:00 UTC harvester run.
 - Moved old one-off and test scripts into `archive/`. The two with hard-coded credentials stay there but aren't committed.

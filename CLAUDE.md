@@ -70,7 +70,7 @@ Elexon BMRS: FUELINST (mix + interconnectors), ITSDO (demand), system-prices (SS
 
 See README "Changes" for what has since been fixed.
 
-1. **Octopus API key rejected (401)** on every run, so all Octopus fields have been 0 for some time.
+1. ~~Octopus API key rejected (401) from 2026-09-30 16:55 UTC.~~ **Resolved 2026-10-06:** the owner regenerated the key in `.env`; the first good row was 12:00 UTC. Octopus fields are 0 for the gap.
 2. **Embedded generation double-counted in the demand breakdown.** `demand_mw` already includes solar and LV wind, but `script.js` treats it as pure ITSDO ("Transmission") and adds embedded again for Net and Gross. "National" is inflated by embedded too.
 3. **"Day-ahead price" is N2EX MIDP**, which is usually 0 (no volume). It isn't a day-ahead price.
 4. **Mix percentages:** in `app.py` the denominator includes negative pumped storage (pumping) and the fuel gets a negative %. The history chart and fuel-detail chart then rebuild GW from % using different totals (total supply vs `demand_mw`).
