@@ -44,6 +44,7 @@ DEFAULT_CONFIG = {
     "mi_price": { "color_low": "#4ADE80", "color_med": "#3B82F6", "color_high": "#EF4444", "thresh_low": 50, "thresh_high": 120 },
     "demand": { "national": "#D4D4D8", "transmission": "#60A5FA", "net": "#FDBA74", "gross": "#EF4444", "dashed": "#FFFFFF" },
     "patterns": { "offpeak_start": "23:30", "offpeak_end": "05:30" },
+    "frequency": { "color_target": "#30C5D5", "color_limit": "#F6643C", "thresh_low": 49.8, "thresh_high": 50.2 },
     "gas": {
         "supply_north_sea": "#30C5D5", "supply_norway": "#60A5FA", "supply_lng": "#F050F8", "supply_storage": "#00D241", "supply_continent": "#A1A1AA",
         "demand_homes": "#D4D4D8", "demand_power": "#F6643C", "demand_industry": "#A1A1AA", "demand_exports": "#FF00A0", "demand_storage": "#00D241",
@@ -259,6 +260,36 @@ def demand_duck():
         y["solar"][r['settlement_period'] - 1] = r['embedded_solar']
         y["days"] = max(y["days"], r['days'])
     return jsonify({"month": month, "years": years, "records": [dict(r) for r in records]})
+
+@app.route('/api/frequency')
+def frequency():
+    """Every 15-second frequency reading for the last `hours` (up to 24), plus today's low, high and time outside the limits."""
+    hours = min(max(request.args.get('hours', 1, type=float), 0.25), 24)
+    limits = load_config()['frequency']
+    low, high = float(limits['thresh_low']), float(limits['thresh_high'])
+    conn = get_db_connection()
+    try:
+        latest = conn.execute('SELECT MAX(t) FROM frequency_readings').fetchone()[0]
+    except sqlite3.OperationalError:
+        latest = None  # the harvester creates the table on its first run
+    if latest is None:
+        conn.close()
+        return jsonify({"readings": [], "today": None})
+    readings = conn.execute('SELECT t, hz FROM frequency_readings WHERE t > ? ORDER BY t', (latest - hours * 3600,)).fetchall()
+    # Today is the UK day
+    since = int(datetime.now(LONDON).replace(hour=0, minute=0, second=0, microsecond=0).timestamp())
+    count, lowest, highest, outside, outside_statutory = conn.execute(
+        'SELECT COUNT(*), MIN(hz), MAX(hz), SUM(hz < ? OR hz > ?), SUM(hz < 49.5 OR hz > 50.5) FROM frequency_readings WHERE t >= ?',
+        (low, high, since)).fetchone()
+    today = None
+    if count:
+        lowest_t = conn.execute('SELECT t FROM frequency_readings WHERE t >= ? AND hz = ? ORDER BY t LIMIT 1', (since, lowest)).fetchone()[0]
+        highest_t = conn.execute('SELECT t FROM frequency_readings WHERE t >= ? AND hz = ? ORDER BY t LIMIT 1', (since, highest)).fetchone()[0]
+        # Each reading stands for 15 seconds
+        today = {"readings": count, "min": lowest, "min_t": lowest_t, "max": highest, "max_t": highest_t,
+                 "outside_secs": outside * 15, "outside_pct": outside / count * 100, "outside_statutory_secs": outside_statutory * 15}
+    conn.close()
+    return jsonify({"readings": [[t, hz] for t, hz in readings], "latest": latest, "low": low, "high": high, "today": today})
 
 @app.route('/api/data')
 def get_data():

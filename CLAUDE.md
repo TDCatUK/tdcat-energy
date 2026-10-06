@@ -31,6 +31,7 @@ cron/launchd on OTTO (every 5 min)
    /changelog    templates/changelog.html  (public, plain-English list of changes)
    /api/demand/recent      last 31 days of NESO half-hourly ND + rooftop solar, stamped with UK local start time
    /api/demand/duck?month= average ND/solar by half-hour for that month, every year since 2010, plus solar records
+   /api/frequency?hours=   every 15-second frequency reading for the last 0.25–24 h, plus today's low/high/time outside limits
    /api/data     latest row + last 288 rows (≈24 h) + today's Powerwall kWh totals
    /api/config   GET only (public): config.json merged over DEFAULT_CONFIG
    /admin/api/config  POST: validates and atomically replaces config.json (protected by Cloudflare Access on /admin/*)
@@ -90,6 +91,10 @@ The harvester's `fetch_neso_demand()` runs on a timer, not every run (tracked in
 - every 3 h: NESO "Demand Data Update" (resource `177f6fa4-…`, about 5 weeks of actuals, refreshed each morning, so it runs up to yesterday or this morning) goes into `neso_demand_hh` (date, settlement period, ND, TSD, embedded solar, embedded wind).
 - every 24 h: NESO "Historic Demand Data YYYY" (one resource per year) is summarised by month and half-hour into `duck_profiles`, with per-year solar records (max solar share of ND + solar, and half-hours where solar > ND) in `duck_records`. Missing years since 2010 are back-filled; the current year is refreshed daily, adding `neso_demand_hh` rows for every day after the yearly file ends (the file lags a few weeks), so records are at most a day late and nothing is double-counted.
 Gotchas: NESO's `datastore_search` breaks when given `fields`, so use `datastore_search_sql` (no SQL functions allowed). Settlement dates come in three formats (`2026-10-05`, `01-OCT-2020`, `01-Oct-23`); `parse_settlement_date()` handles them (don't split on "T": it's in "OCT"). Settlement periods are UK local half-hours from midnight (46 or 50 on clock-change days), so `/api/demand/recent` converts them via UTC. Don't use the dashboard's own `demand_mw` history for timing-sensitive charts: it's the latest *published* ITSDO, so 0–35 min late.
+
+## Grid frequency (15-second readings)
+
+`fetch_frequency()` asks Elexon's frequency stream for everything since the last stored reading (at least the last 12 minutes, at most 7 days), so one request per run brings in every 15-second reading (about 20 per run). They go into `frequency_readings` (`t` = unix seconds UTC, `hz`; `WITHOUT ROWID`, about 21 bytes a reading, ~44 MB a year). While anything before `FREQ_HISTORY_START` (2026-04-23) is missing, each run also back-fills one 7-day chunk (~40k readings, 0.2 s). The newest reading is still stored as `grid_frequency` on the snapshot row. `/api/frequency?hours=` (0.25–24) returns `[t, hz]` pairs plus today's (UK day) min/max with times, seconds outside the admin limits (`frequency.thresh_low/high`) and outside the 49.5–50.5 Hz statutory limits, counting each reading as 15 s. The front end draws it on a linear x axis with Chart.js min-max decimation.
 
 ## Data sources (endpoints in `.env`)
 

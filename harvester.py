@@ -310,6 +310,54 @@ def fetch_battery_flow(now_utc, timeout=20):
         return None, None
 
 
+# === GRID FREQUENCY (every 15-second reading, not just the latest) ===
+# Unix seconds (UTC) -> Hz. About 5,760 readings a day.
+FREQ_TABLE = "CREATE TABLE IF NOT EXISTS frequency_readings (t INTEGER PRIMARY KEY, hz REAL) WITHOUT ROWID"
+FREQ_HISTORY_START = datetime(2026, 4, 23, tzinfo=timezone.utc)  # when energy_snapshots begins
+FREQ_BACKFILL_CHUNK = timedelta(days=7)  # older history fetched per run until it reaches FREQ_HISTORY_START
+
+def fetch_frequency_range(start, end, timeout=20):
+    """Elexon's 15-second frequency readings from start to end as a sorted list of (unix seconds, Hz)."""
+    fmt = '%Y-%m-%dT%H:%M:%SZ'
+    res = requests.get(ELEXON_FREQUENCY_URL, params={'from': start.strftime(fmt), 'to': end.strftime(fmt)}, timeout=timeout)
+    res.raise_for_status()
+    data = res.json()
+    readings = []
+    for r in (data if isinstance(data, list) else data.get('data', [])):
+        if r.get('frequency') is None or not r.get('measurementTime'): continue
+        t = datetime.fromisoformat(r['measurementTime'].replace('Z', '+00:00'))
+        readings.append((int(t.timestamp()), float(r['frequency'])))
+    return sorted(readings)
+
+def stored_frequency_span():
+    """Earliest and latest stored reading (unix seconds), or (None, None)."""
+    try:
+        conn = sqlite3.connect('grid_data.db')
+        try: return conn.execute("SELECT MIN(t), MAX(t) FROM frequency_readings").fetchone()
+        finally: conn.close()
+    except sqlite3.OperationalError:
+        return None, None  # table not created yet
+
+def fetch_frequency(now_utc, timeout=20):
+    """New readings since the last stored one, and a chunk of older history while any is missing.
+
+    One request covers every 15-second reading in a range, so keeping them all costs no extra calls.
+    The recent window reaches back to the last stored reading (at most a week), which also fills
+    the gap after the harvester has been offline.
+    """
+    earliest, latest = stored_frequency_span()
+    start = now_utc - timedelta(minutes=12)  # always enough for a current reading
+    if latest: start = min(start, datetime.fromtimestamp(latest, timezone.utc))
+    start = max(start, now_utc - timedelta(days=7))
+    readings = fetch_frequency_range(start, now_utc, timeout)
+    backfill = []
+    oldest = datetime.fromtimestamp(earliest, timezone.utc) if earliest else start
+    if oldest - FREQ_HISTORY_START > timedelta(minutes=1):
+        try: backfill = fetch_frequency_range(max(FREQ_HISTORY_START, oldest - FREQ_BACKFILL_CHUNK), oldest, timeout * 3)
+        except Exception as e: print(f"Frequency backfill error: {e}")
+    return readings, backfill
+
+
 # === NATIONAL GAS (GB gas transmission system) ===
 NATIONAL_GAS_API = "https://data.nationalgas.com/api"
 GAS_STORAGE_SITES = {'ALDBROUGH', 'HILLTOP', 'HOLE HOUSE FARM', 'HOLFORD', 'HORNSEA', 'STUBLACH', 'EASINGTON ROUGH ST'}
@@ -766,27 +814,13 @@ def fetch_and_store():
         except: latest_demand = 0
 
 
-         # === GRID FREQUENCY API ===
+         # === GRID FREQUENCY API (all 15-second readings since the last run) ===
+        freq_readings, freq_backfill = [], []
         try:
             if not ELEXON_FREQUENCY_URL:
                 raise ValueError("ELEXON_FREQUENCY_URL not set in .env")
-
-            from_dt = (now_utc - timedelta(minutes=12)).strftime('%Y-%m-%dT%H:%M:%SZ')
-            to_dt   = now_utc.strftime('%Y-%m-%dT%H:%M:%SZ')
-
-            url = f"{ELEXON_FREQUENCY_URL}?from={from_dt}&to={to_dt}"
-            
-            freq_res = requests.get(url, timeout=req_timeout).json()
-            
-            data_list = freq_res if isinstance(freq_res, list) else freq_res.get('data', []) if isinstance(freq_res, dict) else []
-            
-            if data_list:
-                data_list.sort(key=lambda x: x.get('measurementTime', ''), reverse=True)
-                latest = data_list[0]
-                grid_frequency = float(latest.get('frequency') or 50.0)
-            else:
-                grid_frequency = 50.0
-
+            freq_readings, freq_backfill = fetch_frequency(now_utc, req_timeout)
+            grid_frequency = freq_readings[-1][1] if freq_readings else 50.0
         except Exception as e:
             print(f"Frequency error: {e}")
             grid_frequency = 50.0
@@ -1007,6 +1041,8 @@ def fetch_and_store():
                 VALUES (?, ?, ?, ?, ?, ?, ?)
             ''', [(day, v.get('storage_stock'), v.get('storage_space'), v.get('lng_stock'), v.get('lng_space'), v.get('rough_stock'), v.get('rough_space'))
                   for day, v in gas.get('daily', {}).items()])
+        cursor.execute(FREQ_TABLE)
+        cursor.executemany('INSERT OR IGNORE INTO frequency_readings VALUES (?, ?)', freq_readings + freq_backfill)
         for table in DEMAND_TABLES:
             cursor.execute(table)
         if neso_demand.get('recent'):

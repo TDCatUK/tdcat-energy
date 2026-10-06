@@ -120,8 +120,9 @@ function togglePriceCharts() {
 function toggleFreqChart() {
     const el = document.getElementById('freq-expanded-chart');
     el.classList.toggle('hidden');
-    if(!el.classList.contains('hidden') && chartFreqDetailInstance) {
-        chartFreqDetailInstance.resize();
+    if(!el.classList.contains('hidden')) {
+        if (chartFreqDetailInstance) chartFreqDetailInstance.resize();
+        loadFrequency();
     }
 }
 
@@ -782,6 +783,94 @@ function drawDuck(d) {
     setNote('duck-fact-belly', `In ${monthName} ${first}, grid demand at 13:00 was ${describe(ratio(first))} demand at 01:00. In ${monthName} ${latest} it was ${describe(ratio(latest))}.`);
 }
 
+// === Grid frequency at full resolution (every 15-second reading) ===
+let freqHours = 1, chartFreqFull;
+const PILL_ACTIVE = "px-4 py-1 rounded-full bg-ui-grey text-white font-semibold shadow-sm transition-all";
+const PILL_IDLE = "px-4 py-1 rounded-full text-ui-light hover:text-white transition-all";
+const clockTime = (t, seconds = false) => new Date(t * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', ...(seconds ? { second: '2-digit' } : {}) });
+const durationText = secs => secs < 60 ? `${secs}s`
+    : secs < 3600 ? `${Math.floor(secs / 60)}m ${String(secs % 60).padStart(2, '0')}s`
+    : `${Math.floor(secs / 3600)}h ${String(Math.floor(secs % 3600 / 60)).padStart(2, '0')}m`;
+
+function setFreqRange(hours) {
+    freqHours = hours;
+    document.querySelectorAll('#freq-range-pills button').forEach(b => b.className = +b.dataset.hours === hours ? PILL_ACTIVE : PILL_IDLE);
+    loadFrequency();
+}
+
+// Today's low, high and time outside the limits on the card and panel; the chart only while the panel is open
+function loadFrequency() {
+    const panel = document.getElementById('freq-expanded-chart');
+    const open = panel && !panel.classList.contains('hidden') && document.getElementById('chartFreqFull');
+    fetch(`/api/frequency?hours=${open ? freqHours : 0.25}`).then(r => r.ok ? r.json() : null).then(d => {
+        if (!d || !d.today) return;
+        const t = d.today, limitCol = activeConfig.frequency?.color_limit || '#F6643C';
+        const outside = v => v < d.low || v > d.high;
+        setNote('freq-today', `Today ${t.min.toFixed(2)}–${t.max.toFixed(2)} Hz`);
+        setNote('freq-stat-min', `${t.min.toFixed(3)} Hz`);
+        setNote('freq-stat-min-t', `at ${clockTime(t.min_t, true)}`);
+        setNote('freq-stat-max', `${t.max.toFixed(3)} Hz`);
+        setNote('freq-stat-max-t', `at ${clockTime(t.max_t, true)}`);
+        setNote('freq-stat-outside-label', `Outside ${d.low}–${d.high} Hz today`);
+        setNote('freq-stat-outside', t.outside_secs ? durationText(t.outside_secs) : 'None');
+        setNote('freq-stat-outside-pct', `${t.outside_pct.toFixed(1)}% of the day so far` +
+            (t.outside_statutory_secs ? `, ${durationText(t.outside_statutory_secs)} outside the legal limits` : ''));
+        setNote('freq-stat-count', t.readings.toLocaleString());
+        [['freq-stat-min', t.min], ['freq-stat-max', t.max]].forEach(([id, v]) => { const el = document.getElementById(id); if (el) el.style.color = outside(v) ? limitCol : ''; });
+        const outEl = document.getElementById('freq-stat-outside');
+        if (outEl) outEl.style.color = t.outside_secs ? limitCol : '';
+        if (open) drawFrequency(d);
+    }).catch(() => {});
+}
+
+function drawFrequency(d) {
+    if (!d.readings.length) return;
+    const limitCol = activeConfig.frequency?.color_limit || '#F6643C', targetCol = activeConfig.frequency?.color_target || '#30C5D5';
+    const points = d.readings.map(([t, hz]) => ({ x: t * 1000, y: hz }));
+    const span = [points[0].x, points[points.length - 1].x];
+    const flat = y => [{ x: span[0], y }, { x: span[1], y }];
+    const outside = v => v < d.low || v > d.high;
+    const values = d.readings.map(r => r[1]);
+    // Always show the operational limits, and round the axis to 0.05 Hz
+    const lo = Math.floor((Math.min(d.low, ...values) - 0.01) * 20) / 20, hi = Math.ceil((Math.max(d.high, ...values) + 0.01) * 20) / 20;
+    const datasets = [
+        { label: 'Frequency', data: points, borderColor: '#D4D4D8', borderWidth: 1.5, pointRadius: 0, tension: 0,
+          segment: { borderColor: ctx => outside(ctx.p0.parsed.y) || outside(ctx.p1.parsed.y) ? limitCol : '#D4D4D8' } },
+        { label: '50 Hz target', data: flat(50), borderColor: targetCol, borderDash: [5, 5], borderWidth: 1.5, pointRadius: 0 },
+        { label: `Operational limits (${d.low}–${d.high} Hz)`, data: flat(d.low), borderColor: limitCol, borderDash: [3, 3], borderWidth: 1, pointRadius: 0 },
+        { label: '', data: flat(d.high), borderColor: limitCol, borderDash: [3, 3], borderWidth: 1, pointRadius: 0 }
+    ];
+    if (chartFreqFull) chartFreqFull.destroy();
+    chartFreqFull = new Chart(document.getElementById('chartFreqFull').getContext('2d'), {
+        type: 'line',
+        data: { datasets },
+        options: {
+            responsive: true, maintainAspectRatio: false, animation: false, parsing: false, normalized: true,
+            interaction: { mode: 'nearest', axis: 'x', intersect: false },
+            plugins: {
+                legend: { display: true, labels: { color: '#D4D4D8', filter: item => item.text !== '' } },
+                decimation: { enabled: true, algorithm: 'min-max' },
+                tooltip: { filter: item => item.datasetIndex === 0, callbacks: {
+                    title: items => clockTime(items[0].parsed.x / 1000, true),
+                    label: ctx => `${ctx.parsed.y.toFixed(3)} Hz` } }
+            },
+            scales: {
+                x: { type: 'linear', min: span[0], max: span[1], grid: { display: false },
+                     // Ticks on round local times: every 10 minutes, hour or 3 hours depending on the range
+                     afterBuildTicks: axis => {
+                         const step = (span[1] - span[0] <= 3600e3 ? 10 : span[1] - span[0] <= 6 * 3600e3 ? 60 : 180) * 60e3;
+                         const offset = new Date(span[1]).getTimezoneOffset() * 60e3;
+                         const ticks = [];
+                         for (let t = Math.ceil((axis.min - offset) / step) * step + offset; t <= axis.max; t += step) ticks.push({ value: t });
+                         axis.ticks = ticks;
+                     },
+                     ticks: { color: '#A1A1AA', maxRotation: 0, callback: v => clockTime(v / 1000) } },
+                y: { min: lo, max: hi, grid: { color: '#3F3F46' }, ticks: { color: '#A1A1AA', callback: v => v.toFixed(2) } }
+            }
+        }
+    });
+}
+
 // Run a flow line's dots backwards (end to start) or forwards
 function setFlowDirection(idPrefix, reverse) {
     [1, 2].forEach(n => {
@@ -803,6 +892,7 @@ function updateDashboard() {
         currentGridData = gridData;
         renderDashboardData(gridData);
         renderForecastCharts();
+        loadFrequency();
     }).catch(e => console.error("Update failed:", e));
 }
 
@@ -1254,7 +1344,10 @@ function renderDashboardData(data) {
     const fLow = activeConfig.frequency?.thresh_low || 49.8;
     const fHigh = activeConfig.frequency?.thresh_high || 50.2;
 
-    if(chartFreqDetailInstance) {
+    // The 5-minute frequency chart, on pages from before the full-resolution one replaced it
+    if (!document.getElementById('chartFreqDetail')) {
+        // nothing to draw
+    } else if(chartFreqDetailInstance) {
         chartFreqDetailInstance.data.labels = timeLabels;
         chartFreqDetailInstance.data.datasets[0].data = data.history.map(h => h.grid_frequency || 50.0);
         chartFreqDetailInstance.data.datasets[1].data = data.history.map(() => 50.0); 
