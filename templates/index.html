@@ -364,6 +364,7 @@
                             <path id="p-imp" d="M 500 350 L 500 200" class="flow-line" stroke="var(--color-imports, #64748B)" />
 
                             <path id="p-psh" d="M 500 200 C 685 200, 685 70, 870 70" class="flow-line" stroke="var(--color-stor, #30C5D5)" />
+                            <path id="p-batt" d="M 500 200 L 500 50" class="flow-line" stroke="var(--color-batt, #A78BFA)" />
                             <path id="p-dem" d="M 500 200 L 870 200" class="flow-line" stroke="var(--color-flow-dem, #D4D4D8)" />
                             <path id="p-exp" d="M 500 200 C 685 200, 685 330, 870 330" class="flow-line" stroke="var(--color-flow-exp, #FF00A0)" />
 
@@ -381,6 +382,9 @@
 
                             <circle class="flow-dot" fill="#ffffff" opacity="0.9" id="dot-psh-1"><animateMotion id="anim-psh-1" dur="3s" repeatCount="indefinite"><mpath href="#p-psh"/></animateMotion></circle>
                             <circle class="flow-dot" fill="#ffffff" opacity="0.9" id="dot-psh-2"><animateMotion id="anim-psh-2" dur="3s" begin="1.5s" repeatCount="indefinite"><mpath href="#p-psh"/></animateMotion></circle>
+
+                            <circle class="flow-dot" fill="#ffffff" opacity="0.9" id="dot-batt-1"><animateMotion id="anim-batt-1" dur="3s" repeatCount="indefinite"><mpath href="#p-batt"/></animateMotion></circle>
+                            <circle class="flow-dot" fill="#ffffff" opacity="0.9" id="dot-batt-2"><animateMotion id="anim-batt-2" dur="3s" begin="1.5s" repeatCount="indefinite"><mpath href="#p-batt"/></animateMotion></circle>
 
                             <circle class="flow-dot" fill="#ffffff" opacity="0.9" id="dot-dem-1"><animateMotion id="anim-dem-1" dur="2s" repeatCount="indefinite"><mpath href="#p-dem"/></animateMotion></circle>
                             <circle class="flow-dot" fill="#ffffff" opacity="0.9" id="dot-dem-2"><animateMotion id="anim-dem-2" dur="2s" begin="1s" repeatCount="indefinite"><mpath href="#p-dem"/></animateMotion></circle>
@@ -445,9 +449,19 @@
                                 <foreignObject width="24" height="24" x="-12" y="-28" style="color: var(--color-stor, #30C5D5);">
                                     <div xmlns="http://www.w3.org/1999/xhtml" class="flex items-center justify-center w-full h-full"><i id="icon-psh" class="fa-solid fa-battery-half text-[18px]"></i></div>
                                 </foreignObject>
-                                <text y="5" class="flow-title">Storage</text>
+                                <text y="5" class="flow-title" style="font-size: 8px;">Pumped Hydro</text>
                                 <text y="22" class="flow-val" id="svg-val-psh">-- GW</text>
-                                <text y="35" class="flow-text" id="svg-dir-psh" style="font-size: 9px; fill: #A1A1AA;"></text>
+                                <text y="34" class="flow-text" id="svg-dir-psh" style="font-size: 7.5px; fill: #A1A1AA;"></text>
+                            </g>
+
+                            <g id="batt-node-group" transform="translate(500, 50)" class="cursor-pointer transition-opacity hover:opacity-80">
+                                <circle r="46" class="node-circle" stroke="var(--color-batt, #A78BFA)" />
+                                <foreignObject width="24" height="24" x="-12" y="-28" style="color: var(--color-batt, #A78BFA);">
+                                    <div xmlns="http://www.w3.org/1999/xhtml" class="flex items-center justify-center w-full h-full"><i id="icon-batt" class="fa-solid fa-battery-half text-[18px]"></i></div>
+                                </foreignObject>
+                                <text y="5" class="flow-title">Batteries</text>
+                                <text y="22" class="flow-val" id="svg-val-batt">-- GW</text>
+                                <text y="34" class="flow-text" id="svg-dir-batt" style="font-size: 7.5px; fill: #A1A1AA;"></text>
                             </g>
 
                             <g transform="translate(870, 200)">

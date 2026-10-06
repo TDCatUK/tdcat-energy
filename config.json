@@ -27,9 +27,10 @@
             "imp": "fa-solid fa-earth-europe",
             "hv": "fa-solid fa-industry",
             "wind": "fa-solid fa-fan",
-            "psh": "fa-solid fa-battery-half",
+            "psh": "fa-solid fa-water",
             "dem": "fa-solid fa-house",
-            "exp": "fa-solid fa-arrow-up-from-bracket"
+            "exp": "fa-solid fa-arrow-up-from-bracket",
+            "batt": "fa-solid fa-battery-half"
         }
     },
     "map_nodes": {

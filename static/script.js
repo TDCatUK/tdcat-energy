@@ -229,6 +229,7 @@ function applyConfig(config) {
         root.style.setProperty('--color-stor', config.flow.storage);
         root.style.setProperty('--color-flow-dem', config.flow.demand);
         root.style.setProperty('--color-flow-exp', config.flow.exports);
+        root.style.setProperty('--color-batt', config.fuels.battery || '#A78BFA');
         root.style.setProperty('--color-flow-bg', config.flow.bg_color || '#000000');
 
         document.querySelectorAll('#flow-diagram .flow-dot').forEach(el => {
@@ -247,6 +248,7 @@ function applyConfig(config) {
             applyIcon('icon-hv', config.flow.icons.hv);
             applyIcon('icon-wind', config.flow.icons.wind);
             applyIcon('icon-psh', config.flow.icons.psh);
+            applyIcon('icon-batt', config.flow.icons.batt || 'fa-solid fa-battery-half');
             applyIcon('icon-dem', config.flow.icons.dem);
             applyIcon('icon-exp', config.flow.icons.exp);
         }
@@ -829,16 +831,17 @@ function renderDashboardData(data) {
     const val_wind = (data.generation_mix['Wind'] || 0) / 1000;
     const val_lv_wind = (data.generation_mix['LV Wind'] || 0) / 1000;
     const val_sol = (data.generation_mix['Solar'] || 0) / 1000;
-    // Storage node: pumped storage plus (when switched on) the battery estimate, as one net flow.
+    // Storage nodes: pumped hydro (right) and the battery estimate (top, when switched on), each as a net flow.
     // Above zero it's releasing energy into the grid, below zero it's storing it.
     const psh_gen = Math.max(0, data.generation_mix['Pumped Storage'] || 0) / 1000;
     const psh_pump = (data.breakdown.psh_pumping_mw || 0) / 1000;
+    const psh_net = psh_gen - psh_pump;
     const batt = showBatteryInMix && data.battery && data.battery.discharge_mw != null ? data.battery : null;
     const batt_out = batt ? batt.discharge_mw / 1000 : 0, batt_in = batt ? batt.charge_mw / 1000 : 0;
-    const val_stor_net = (psh_gen + batt_out) - (psh_pump + batt_in);
+    const batt_net = batt_out - batt_in;
     const val_hv = (data.total_generation_mw / 1000) - val_wind - val_lv_wind - val_sol - psh_gen;
-    const val_tot = val_imp + Math.max(0, val_hv) + val_wind + val_lv_wind + val_sol + Math.max(0, val_stor_net);
-    const val_psh = Math.abs(val_stor_net);
+    const val_tot = val_imp + Math.max(0, val_hv) + val_wind + val_lv_wind + val_sol + Math.max(0, psh_net) + Math.max(0, batt_net);
+    const val_psh = Math.abs(psh_net), val_batt = Math.abs(batt_net);
     const val_dem = nNet;
 
     document.getElementById('svg-val-imp').textContent = val_imp.toFixed(2) + ' GW';
@@ -922,22 +925,35 @@ function renderDashboardData(data) {
     document.getElementById('svg-val-sol').textContent = val_sol.toFixed(2) + ' GW';
     document.getElementById('svg-val-tot').textContent = val_tot.toFixed(2) + ' GW';
     document.getElementById('svg-val-psh').textContent = val_psh.toFixed(2) + ' GW';
-    const dirEl = document.getElementById('svg-dir-psh');
-    if (dirEl) dirEl.textContent = val_stor_net > 0.005 ? 'discharging' : (val_stor_net < -0.005 ? 'charging' : '');
-    setFlowDirection('psh', val_stor_net > 0);  // discharging: dots run from Storage into Total Output
+    // Storage nodes: direction (dots run into Total Output while discharging) and hover breakdown
+    const direction = net => net > 0.005 ? 'discharging' : (net < -0.005 ? 'charging' : '');
+    const tipRow = (colour, name, gw) => `<div class="flex justify-between gap-6 mb-1"><span class="font-medium" style="color: ${colour}">${name}:</span><span class="font-mono font-bold">${gw.toFixed(2)} GW</span></div>`;
+    const nodeTip = (groupId, html) => {
+        const group = document.getElementById(groupId);
+        if (!group) return;
+        group.onmouseenter = (e) => showCustomTooltip(e, html);
+        group.onmousemove = moveCustomTooltip;
+        group.onmouseleave = hideCustomTooltip;
+    };
 
-    const pshGroup = document.getElementById('psh-node-group');
-    if (pshGroup) {
-        const row = (colour, name, gw) => `<div class="flex justify-between gap-6 mb-1"><span class="font-medium" style="color: ${colour}">${name}:</span><span class="font-mono font-bold">${gw}</span></div>`;
+    const pshDir = document.getElementById('svg-dir-psh');
+    if (pshDir) pshDir.textContent = psh_net > 0.005 ? 'generating' : (psh_net < -0.005 ? 'pumping' : '');
+    setFlowDirection('psh', psh_net > 0);
+    nodeTip('psh-node-group', `<div class="font-bold mb-1.5 border-b border-ui-grey/50 pb-1.5 text-[13px]">Pumped hydro: ${psh_net >= 0 ? 'generating' : 'pumping'} ${val_psh.toFixed(2)} GW</div>` +
+        tipRow(activeConfig.fuels.pumped_storage, 'Generating', psh_gen) + tipRow(activeConfig.fuels.pumped_storage, 'Pumping', psh_pump));
+
+    const battVal = document.getElementById('svg-val-batt');
+    if (battVal) {
         const battColour = activeConfig.fuels.battery || '#A78BFA';
-        const tipHtml = `<div class="font-bold mb-1.5 border-b border-ui-grey/50 pb-1.5 text-[13px]">Storage (net): ${val_stor_net >= 0 ? 'discharging' : 'charging'} ${val_psh.toFixed(2)} GW</div>` +
-            row(activeConfig.fuels.pumped_storage, 'Pumped storage generating', psh_gen.toFixed(2) + ' GW') +
-            row(activeConfig.fuels.pumped_storage, 'Pumped storage pumping', psh_pump.toFixed(2) + ' GW') +
-            (batt ? row(battColour, 'Batteries discharging (est.)', batt_out.toFixed(2) + ' GW') + row(battColour, 'Batteries charging (est.)', batt_in.toFixed(2) + ' GW')
-                  : row('#A1A1AA', 'Batteries (est.)', 'switched off'));
-        pshGroup.onmouseenter = (e) => showCustomTooltip(e, tipHtml);
-        pshGroup.onmousemove = moveCustomTooltip;
-        pshGroup.onmouseleave = hideCustomTooltip;
+        battVal.textContent = batt ? val_batt.toFixed(2) + ' GW' : 'Off';
+        document.getElementById('svg-dir-batt').textContent = batt ? direction(batt_net) : '';
+        document.getElementById('batt-node-group').style.opacity = batt ? '' : '0.4';
+        setFlowDirection('batt', batt_net > 0);
+        nodeTip('batt-node-group', batt
+            ? `<div class="font-bold mb-1.5 border-b border-ui-grey/50 pb-1.5 text-[13px]">Grid batteries (est.): ${batt_net >= 0 ? 'discharging' : 'charging'} ${val_batt.toFixed(2)} GW net</div>` +
+              tipRow(battColour, 'Discharging', batt_out) + tipRow(battColour, 'Charging', batt_in) +
+              `<div class="text-[11px] text-[#A1A1AA] mt-1">Unofficial estimate from Balancing Mechanism data</div>`
+            : `<div class="font-bold text-[13px]">Grid batteries (est.)</div><div class="text-[11px] text-[#A1A1AA] mt-1">Switched off. Use the Batteries (est.) switch to show them.</div>`);
     }
     document.getElementById('svg-val-dem').textContent = Math.max(0, val_dem).toFixed(2) + ' GW';
     document.getElementById('svg-val-exp').textContent = val_exp.toFixed(2) + ' GW';
@@ -947,6 +963,7 @@ function renderDashboardData(data) {
     setFlowSpeed('wind', val_wind + val_lv_wind);
     setFlowSpeed('sol', val_sol);
     setFlowSpeed('psh', val_psh);
+    setFlowSpeed('batt', batt ? val_batt : 0);
     setFlowSpeed('dem', val_dem);
     setFlowSpeed('exp', val_exp);
     // ------------------------------

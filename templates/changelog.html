@@ -27,65 +27,37 @@
     </header>
 
     <main class="max-w-[1000px] mx-auto px-4 mt-10 space-y-10">
-        <section class="bg-ui-card p-8 rounded-2xl border border-brand-cyan shadow-lg">
-            <h2 class="text-2xl font-bold text-white mb-2">6 October 2026</h2>
-            <p class="text-ui-light leading-relaxed">A big overhaul: corrected maths throughout, new battery and gas data, and a security fix.</p>
-        </section>
-
-        <section class="bg-ui-card p-8 rounded-2xl border border-brand-cyan shadow-lg">
-            <h2 class="text-2xl font-bold text-white mb-4 border-b border-ui-grey pb-4">New</h2>
-            <ul class="list-disc pl-5 space-y-3 text-ui-light leading-relaxed">
-                <li><strong class="text-white">Batteries in the charts:</strong> the battery estimate now appears in Generation by Fuel Type, the Live Energy Flow and the 24-Hour Generation Mix, with one On/Off switch for all three. The flow's Storage node is now two-way (pumped storage plus batteries) and shows whether storage is charging or discharging overall.</li>
-                <li><strong class="text-white">Changelog:</strong> this page.</li>
-                <li><strong class="text-white">Gas storage compared with previous years:</strong> the Storage card compares today's stock with the same date over the previous five years and turns red, amber or green. It has a 12-month sparkline, and clicking it shows this year against every year back to 2020.</li>
-                <li><strong class="text-white">Frequency warning:</strong> the Frequency card changes colour when frequency is outside the 49.8–50.2 Hz operational limits.</li>
-                <li><strong class="text-white">National Gas Data:</strong> a new section with live linepack (gas held in the pipelines), total supply and demand, where gas is coming from (North Sea, Norway, LNG, storage, the Continent) and where it's going (homes and businesses, power stations, industry, exports, storage), a rough gas-for-power efficiency figure, and a 24-hour chart.</li>
-                <li><strong class="text-white">Grid Batteries (unofficial estimate):</strong> GB grid-scale battery charging and discharging, worked out every 5 minutes from Balancing Mechanism data, with a 24-hour chart. Batteries can also be picked in the single-fuel chart.</li>
-            </ul>
-        </section>
-        <section class="bg-ui-card p-8 rounded-2xl border border-ui-grey shadow-lg">
-            <h2 class="text-2xl font-bold text-white mb-4 border-b border-ui-grey pb-4">Fixed</h2>
-            <ul class="list-disc pl-5 space-y-3 text-ui-light leading-relaxed">
-                <li><strong class="text-white">Demand breakdown:</strong> rooftop solar and small wind were being counted twice, which made Transmission, National, Net and Gross demand about 6 GW too high around midday. The figures now match Elexon's own.</li>
-                <li><strong class="text-white">Generation mix:</strong> pumped storage showed as negative generation while pumping, and the charts rebuilt GW figures from percentages using different totals. The mix now adds up to exactly 100% and the charts use the real MW figures.</li>
-                <li><strong class="text-white">Battery level:</strong> now shows the same percentage as the Tesla app, which hides a 5% reserve.</li>
-                <li><strong class="text-white">Home "today" totals:</strong> now start at midnight UK time. During British Summer Time they were missing the first hour of the day.</li>
-                <li><strong class="text-white">Octopus daily figures:</strong> import, export and gas now cover one whole day, the same day for all three, with the right date. Previously they added up the latest 48 half-hours, which could span two days.</li>
-                <li><strong class="text-white">Octopus data:</strong> restored after the API key was renewed. There's a gap from 30 September 16:55 to 6 October 12:00 UTC.</li>
-                <li><strong class="text-white">Market index price:</strong> no longer drops to £0 just after midnight, and half-hours with no trades are ignored.</li>
-                <li><strong class="text-white">Carbon intensity:</strong> uses the forecast when the measured figure for the current half-hour isn't published yet, instead of showing 0.</li>
-                <li><strong class="text-white">Greenlink:</strong> the Ireland interconnector is now named properly and counted in the Ireland flow on the map.</li>
-                <li><strong class="text-white">Chart labels:</strong> the battery chart's axis no longer shows numbers like -0.2000000000000002.</li>
-            </ul>
-        </section>
-        <section class="bg-ui-card p-8 rounded-2xl border border-ui-grey shadow-lg">
-            <h2 class="text-2xl font-bold text-white mb-4 border-b border-ui-grey pb-4">Security</h2>
-            <ul class="list-disc pl-5 space-y-3 text-ui-light leading-relaxed">
-                <li><strong class="text-white">Settings:</strong> saving the dashboard settings now needs the admin login. Before this, anyone who found the address could change them.</li>
-            </ul>
-        </section>
-        <section class="bg-ui-card p-8 rounded-2xl border border-ui-grey shadow-lg">
-            <h2 class="text-2xl font-bold text-white mb-4 border-b border-ui-grey pb-4">Settings (Admin page)</h2>
-            <ul class="list-disc pl-5 space-y-3 text-ui-light leading-relaxed">
-                <li>Gas chart colours and the storage warning thresholds can be changed.</li>
-                <li>Batteries have their own colour, and new fuel colours are saved properly.</li>
-                <li>The admin page now tells you if a save fails, instead of always saying it worked.</li>
-            </ul>
-        </section>
-        <section class="bg-ui-card p-8 rounded-2xl border border-ui-grey shadow-lg">
-            <h2 class="text-2xl font-bold text-white mb-4 border-b border-ui-grey pb-4">About page</h2>
-            <ul class="list-disc pl-5 space-y-3 text-ui-light leading-relaxed">
-                <li>Rewritten and corrected: the four demand measures, frequency limits, imbalance and market prices, the dashed line on the generation chart, and UK changed to GB where it means the electricity grid.</li>
-                <li>New sections explaining the battery estimate, the gas data and the storage comparison.</li>
-            </ul>
-        </section>
-        <section class="bg-ui-card p-8 rounded-2xl border border-ui-grey shadow-lg">
-            <h2 class="text-2xl font-bold text-white mb-4 border-b border-ui-grey pb-4">Behind the scenes</h2>
-            <ul class="list-disc pl-5 space-y-3 text-ui-light leading-relaxed">
-                <li>The project is backed up to GitHub, with a history of every change.</li>
-                <li>The data collector's log was cleaned up and now keeps 90 days.</li>
-                <li>Old test scripts and database backups were removed.</li>
-            </ul>
+        <section class="bg-ui-card p-6 rounded-2xl border border-ui-grey shadow-lg">
+            <div class="flex flex-wrap items-baseline justify-between gap-2 border-b border-ui-grey pb-3 mb-4">
+                <h2 class="text-xl font-bold text-white">6 October 2026</h2>
+                <span class="text-sm text-ui-light">A big overhaul: better maths, batteries and gas</span>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-x-10 gap-y-5 text-sm leading-relaxed">
+                <div>
+                    <h3 class="text-xs font-bold uppercase tracking-wider text-brand-cyan mb-2">New</h3>
+                    <ul class="list-disc pl-4 space-y-1.5 text-ui-light">
+                        <li>I've added a <strong class="text-white">National Gas</strong> section: gas in the pipelines, supply and demand, where it comes from and goes to, and a 24-hour chart.</li>
+                        <li>Gas <strong class="text-white">storage</strong> is now compared with the same date in previous years. Click the card for a year-by-year chart back to 2020.</li>
+                        <li>I've added an unofficial <strong class="text-white">Grid Batteries</strong> estimate with its own 24-hour chart.</li>
+                        <li>Batteries now appear in the fuel mix, the 24-hour chart and the energy flow, where they have their own node. There's an On/Off switch if you'd rather leave the estimate out.</li>
+                        <li>The <strong class="text-white">Frequency</strong> card changes colour outside its normal operating limits.</li>
+                        <li>I've rewritten the <strong class="text-white">About</strong> page and started this changelog.</li>
+                    </ul>
+                </div>
+                <div>
+                    <h3 class="text-xs font-bold uppercase tracking-wider text-brand-cyan mb-2">Fixed</h3>
+                    <ul class="list-disc pl-4 space-y-1.5 text-ui-light">
+                        <li>Demand was counting rooftop solar and small wind twice, making it about 6 GW too high at midday. It now matches Elexon's figures.</li>
+                        <li>Pumped storage showed as negative generation when pumping. The fuel mix now adds up to 100%.</li>
+                        <li>My home battery level now matches the Tesla app.</li>
+                        <li>Today's home totals now start at midnight UK time.</li>
+                        <li>Octopus daily figures now cover one whole day, with the right date. They were also missing for a week until I renewed the API key.</li>
+                        <li>The market price no longer drops to £0 just after midnight.</li>
+                        <li>Carbon intensity no longer shows 0 before the latest figure is published.</li>
+                        <li>The Greenlink interconnector to Ireland now shows up properly.</li>
+                    </ul>
+                </div>
+            </div>
         </section>
 
     </main>

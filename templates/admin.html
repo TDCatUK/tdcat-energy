@@ -208,7 +208,7 @@
             "theme": { "brand_cyan": "#30C5D5", "brand_orange": "#F6643C", "octo_pink": "#FF00A0", "tesla_green": "#00D241" },
             "octopus": { "color_imp": "#FF00A0", "color_exp": "#FF00A0" },
             "powerwall": { "solar_efficiency": 95.5 },
-            "flow": { "hv_gen": "#F6643C", "total": "#30C5D5", "storage": "#30C5D5", "demand": "#D4D4D8", "exports": "#FF00A0", "bg_color": "#000000", "speed_mode": "relative", "base_speed": 5, "dot_size": 2.5, "icons": { "sol": "fa-solid fa-sun", "imp": "fa-solid fa-earth-europe", "hv": "fa-solid fa-industry", "wind": "fa-solid fa-wind", "psh": "fa-solid fa-battery-half", "dem": "fa-solid fa-house", "exp": "fa-solid fa-file-export" } },
+            "flow": { "hv_gen": "#F6643C", "total": "#30C5D5", "storage": "#30C5D5", "demand": "#D4D4D8", "exports": "#FF00A0", "bg_color": "#000000", "speed_mode": "relative", "base_speed": 5, "dot_size": 2.5, "icons": { "sol": "fa-solid fa-sun", "imp": "fa-solid fa-earth-europe", "hv": "fa-solid fa-industry", "wind": "fa-solid fa-wind", "psh": "fa-solid fa-water", "batt": "fa-solid fa-battery-half", "dem": "fa-solid fa-house", "exp": "fa-solid fa-file-export" } },
             "map_nodes": { "uk": {"x": 460, "y": 460}, "ire": {"x": 280, "y": 460}, "fra": {"x": 510, "y": 680}, "bel": {"x": 610, "y": 600}, "ned": {"x": 650, "y": 520}, "den": {"x": 800, "y": 380}, "nor": {"x": 680, "y": 200} },
             "fuels": { "wind": "#10B981", "lv_wind": "#5FB035", "solar": "#FFD700", "hydro": "#60A5FA", "pumped_storage": "#30C5D5", "biomass": "#8B4513", "nuclear": "#A1A1AA", "imports": "#64748B", "other": "#A855F7", "ocg": "#9A3412", "ccgt": "#F6643C", "battery": "#A78BFA" },
             "gradients": { "temp_hot": "#EF4444", "temp_cold": "#3B82F6" },
@@ -307,7 +307,7 @@
 
             createInput('flow_hv', 'HV Generation', config.flow.hv_gen, 'flow-color-inputs');
             createInput('flow_tot', 'Total Output', config.flow.total, 'flow-color-inputs');
-            createInput('flow_stor', 'Storage', config.flow.storage, 'flow-color-inputs');
+            createInput('flow_stor', 'Pumped Storage', config.flow.storage, 'flow-color-inputs');
             createInput('flow_dem', 'Demand', config.flow.demand, 'flow-color-inputs');
             createInput('flow_exp', 'Exports', config.flow.exports, 'flow-color-inputs');
             
@@ -323,7 +323,8 @@
             createIconInput('imp', 'Imports', config.flow.icons?.imp || 'fa-solid fa-earth-europe', 'flow-icon-inputs');
             createIconInput('hv', 'HV Gen', config.flow.icons?.hv || 'fa-solid fa-industry', 'flow-icon-inputs');
             createIconInput('wind', 'Wind Node (HV & LV)', config.flow.icons?.wind || 'fa-solid fa-wind', 'flow-icon-inputs');
-            createIconInput('psh', 'Storage', config.flow.icons?.psh || 'fa-solid fa-battery-half', 'flow-icon-inputs');
+            createIconInput('psh', 'Pumped Storage', config.flow.icons?.psh || 'fa-solid fa-water', 'flow-icon-inputs');
+            createIconInput('batt', 'Batteries (colour: Fuel Colors)', config.flow.icons?.batt || 'fa-solid fa-battery-half', 'flow-icon-inputs');
             createIconInput('dem', 'Demand', config.flow.icons?.dem || 'fa-solid fa-house', 'flow-icon-inputs');
             createIconInput('exp', 'Exports', config.flow.icons?.exp || 'fa-solid fa-file-export', 'flow-icon-inputs');
 
@@ -431,6 +432,7 @@
                         hv: document.getElementById('icon_hv').value,
                         wind: document.getElementById('icon_wind').value,
                         psh: document.getElementById('icon_psh').value,
+                        batt: document.getElementById('icon_batt').value,
                         dem: document.getElementById('icon_dem').value,
                         exp: document.getElementById('icon_exp').value
                     }

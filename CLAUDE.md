@@ -8,7 +8,7 @@ Handover notes for any Claude session (local or cloud) working on this repo.
 - **Never test against live data.** Copy `grid_data.db`, `config.json` or `static/forecast.json` into a scratch directory and point code at the copy. Open the live DB read-only if you must look (`sqlite3 "file:grid_data.db?mode=ro"`).
 - **Commit and push after every change.** Remote: `git@github.com:TDCatUK/tdcat-energy.git`, branch `main`. No pulling is needed because every machine uses the same folder. Never force-push or rewrite history without asking.
 - **Add a dated entry to the "Changes" section of `README.md` for every change**, and keep this file current.
-- **User-visible changes also go on the public Changelog page** (`templates/changelog.html`, a hand-written plain-English summary grouped under a date heading). Internal-only changes (docs, refactors) don't need to.
+- **User-visible changes also go on the public Changelog page** (`templates/changelog.html`): one compact card per date with "New" and "Fixed" columns, written in the first person by the owner ("I've added…"), short plain-English bullets. Leave out security details, internal/behind-the-scenes work and admin-only settings.
 - Edits to `app.py` and `harvester.py` take effect on OTTO: the harvester picks them up on its next 5-minute run, but Flask needs a restart. The restart happens on OTTO, so tell the owner when one is needed.
 
 ## What it is
