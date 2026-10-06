@@ -135,6 +135,28 @@
             <h2 class="text-xl font-bold text-white mb-6 border-b border-ui-grey pb-4">Generation Fuel Colors</h2>
             <div class="grid grid-cols-1 md:grid-cols-3 gap-4" id="fuel-inputs"></div>
         </section>
+        <section class="bg-ui-card p-8 rounded-2xl border border-ui-grey shadow-lg">
+            <h2 class="text-xl font-bold text-white mb-6 border-b border-ui-grey pb-4">National Gas Colors</h2>
+            <h3 class="text-brand-cyan font-bold mb-4 mt-2">Where It's Coming From</h3>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4" id="gas-supply-inputs"></div>
+            <h3 class="text-brand-cyan font-bold mb-4 mt-6">Where It's Going</h3>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4" id="gas-demand-inputs"></div>
+            <h3 class="text-brand-cyan font-bold mb-4 mt-6">24-Hour Chart Lines</h3>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4" id="gas-line-inputs"></div>
+            <h3 class="text-brand-cyan font-bold mb-4 mt-6">Storage vs Previous Years</h3>
+            <p class="text-sm text-ui-light mb-4">The storage card compares today's stock with the average for the same date over the previous five years.</p>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4" id="gas-storage-inputs"></div>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div class="flex items-center justify-between p-3 bg-ui-darkest rounded-lg border border-ui-grey/50">
+                    <span class="font-semibold text-ui-light tracking-wide uppercase text-sm">Low below (% of average)</span>
+                    <input type="number" id="gas_storage_thresh_low" class="w-16 bg-ui-card border border-ui-grey rounded p-1 text-center text-white font-bold">
+                </div>
+                <div class="flex items-center justify-between p-3 bg-ui-darkest rounded-lg border border-ui-grey/50">
+                    <span class="font-semibold text-ui-light tracking-wide uppercase text-sm">Normal from (% of average)</span>
+                    <input type="number" id="gas_storage_thresh_high" class="w-16 bg-ui-card border border-ui-grey rounded p-1 text-center text-white font-bold">
+                </div>
+            </div>
+        </section>
 
         <section class="bg-ui-card p-8 rounded-2xl border border-ui-grey shadow-lg">
             <h2 class="text-xl font-bold text-white mb-6 border-b border-ui-grey pb-4">4 Levels of Demand Colors</h2>
@@ -188,7 +210,7 @@
             "powerwall": { "solar_efficiency": 95.5 },
             "flow": { "hv_gen": "#F6643C", "total": "#30C5D5", "storage": "#30C5D5", "demand": "#D4D4D8", "exports": "#FF00A0", "bg_color": "#000000", "speed_mode": "relative", "base_speed": 5, "dot_size": 2.5, "icons": { "sol": "fa-solid fa-sun", "imp": "fa-solid fa-earth-europe", "hv": "fa-solid fa-industry", "wind": "fa-solid fa-wind", "psh": "fa-solid fa-battery-half", "dem": "fa-solid fa-house", "exp": "fa-solid fa-file-export" } },
             "map_nodes": { "uk": {"x": 460, "y": 460}, "ire": {"x": 280, "y": 460}, "fra": {"x": 510, "y": 680}, "bel": {"x": 610, "y": 600}, "ned": {"x": 650, "y": 520}, "den": {"x": 800, "y": 380}, "nor": {"x": 680, "y": 200} },
-            "fuels": { "wind": "#10B981", "lv_wind": "#5FB035", "solar": "#FFD700", "hydro": "#60A5FA", "pumped_storage": "#30C5D5", "biomass": "#8B4513", "nuclear": "#A1A1AA", "imports": "#64748B", "other": "#A855F7", "ocg": "#9A3412", "ccgt": "#F6643C" },
+            "fuels": { "wind": "#10B981", "lv_wind": "#5FB035", "solar": "#FFD700", "hydro": "#60A5FA", "pumped_storage": "#30C5D5", "biomass": "#8B4513", "nuclear": "#A1A1AA", "imports": "#64748B", "other": "#A855F7", "ocg": "#9A3412", "ccgt": "#F6643C", "battery": "#A78BFA" },
             "gradients": { "temp_hot": "#EF4444", "temp_cold": "#3B82F6" },
             "carbon": { "low": "#4ADE80", "med": "#F6643C", "high": "#EF4444" },
             "price": { "color_low": "#4ADE80", "color_med": "#F6643C", "color_high": "#EF4444", "thresh_low": 50, "thresh_high": 120 },
@@ -196,6 +218,12 @@
             "niv": { "color_short": "#F6643C", "color_long": "#30C5D5" },
             "demand": { "national": "#D4D4D8", "transmission": "#60A5FA", "net": "#FDBA74", "gross": "#EF4444", "dashed": "#FFFFFF" },
             "frequency": { "color_target": "#30C5D5", "color_limit": "#F6643C", "thresh_low": 49.8, "thresh_high": 50.2 },
+            "gas": {
+                "supply_north_sea": "#30C5D5", "supply_norway": "#60A5FA", "supply_lng": "#F050F8", "supply_storage": "#00D241", "supply_continent": "#A1A1AA",
+                "demand_homes": "#D4D4D8", "demand_power": "#F6643C", "demand_industry": "#A1A1AA", "demand_exports": "#FF00A0", "demand_storage": "#00D241",
+                "line_supply": "#30C5D5", "line_demand": "#F6643C", "line_linepack": "#D4D4D8",
+                "storage_low": "#EF4444", "storage_med": "#F6643C", "storage_high": "#4ADE80", "storage_thresh_low": 75, "storage_thresh_high": 100
+            },
             "footer": { "use1_text": "Pexels Stock Photos", "use1_url": "#", "use2_text": "Rod Allsopp", "use2_url": "#", "use3_text": "OpenWRT", "use3_url": "#", "use4_text": "Love Your Libraries", "use4_url": "#", "fol1_text": "Twitter", "fol1_url": "#", "fol2_text": "Instagram", "fol2_url": "#", "fol3_text": "Patreon", "fol3_url": "#" }
         };
 
@@ -339,6 +367,26 @@
 
             for (const [key, val] of Object.entries(config.fuels)) { createInput(`fuel_${key}`, key.replace('_', ' '), val, 'fuel-inputs'); }
 
+            const gas = config.gas || DEFAULT_CONFIG.gas;
+            createInput('gas_supply_north_sea', 'North Sea (UK & Norway)', gas.supply_north_sea || DEFAULT_CONFIG.gas.supply_north_sea, 'gas-supply-inputs');
+            createInput('gas_supply_norway', 'Norway (Langeled)', gas.supply_norway || DEFAULT_CONFIG.gas.supply_norway, 'gas-supply-inputs');
+            createInput('gas_supply_lng', 'LNG', gas.supply_lng || DEFAULT_CONFIG.gas.supply_lng, 'gas-supply-inputs');
+            createInput('gas_supply_storage', 'Storage withdrawal', gas.supply_storage || DEFAULT_CONFIG.gas.supply_storage, 'gas-supply-inputs');
+            createInput('gas_supply_continent', 'Continent (BBL, IUK)', gas.supply_continent || DEFAULT_CONFIG.gas.supply_continent, 'gas-supply-inputs');
+            createInput('gas_demand_homes', 'Homes & businesses', gas.demand_homes || DEFAULT_CONFIG.gas.demand_homes, 'gas-demand-inputs');
+            createInput('gas_demand_power', 'Power stations', gas.demand_power || DEFAULT_CONFIG.gas.demand_power, 'gas-demand-inputs');
+            createInput('gas_demand_industry', 'Industry', gas.demand_industry || DEFAULT_CONFIG.gas.demand_industry, 'gas-demand-inputs');
+            createInput('gas_demand_exports', 'Exports', gas.demand_exports || DEFAULT_CONFIG.gas.demand_exports, 'gas-demand-inputs');
+            createInput('gas_demand_storage', 'Storage injection', gas.demand_storage || DEFAULT_CONFIG.gas.demand_storage, 'gas-demand-inputs');
+            createInput('gas_line_supply', 'Supply line', gas.line_supply || DEFAULT_CONFIG.gas.line_supply, 'gas-line-inputs');
+            createInput('gas_line_demand', 'Demand line', gas.line_demand || DEFAULT_CONFIG.gas.line_demand, 'gas-line-inputs');
+            createInput('gas_line_linepack', 'Linepack line', gas.line_linepack || DEFAULT_CONFIG.gas.line_linepack, 'gas-line-inputs');
+            createInput('gas_storage_low', 'Well below average', gas.storage_low || DEFAULT_CONFIG.gas.storage_low, 'gas-storage-inputs');
+            createInput('gas_storage_med', 'Below average', gas.storage_med || DEFAULT_CONFIG.gas.storage_med, 'gas-storage-inputs');
+            createInput('gas_storage_high', 'Normal or above', gas.storage_high || DEFAULT_CONFIG.gas.storage_high, 'gas-storage-inputs');
+            document.getElementById('gas_storage_thresh_low').value = gas.storage_thresh_low ?? 75;
+            document.getElementById('gas_storage_thresh_high').value = gas.storage_thresh_high ?? 100;
+
             createInput('carbon_low', 'Low Intensity (<100)', config.carbon.low, 'carbon-inputs');
             createInput('carbon_med', 'Med Intensity (100-200)', config.carbon.med, 'carbon-inputs');
             createInput('carbon_high', 'High Intensity (>200)', config.carbon.high, 'carbon-inputs');
@@ -396,7 +444,9 @@
                     den: { x: parseInt(document.getElementById('map_den_x').value), y: parseInt(document.getElementById('map_den_y').value) },
                     nor: { x: parseInt(document.getElementById('map_nor_x').value), y: parseInt(document.getElementById('map_nor_y').value) }
                 },
-                fuels: { lv_wind: document.getElementById('fuel_lv_wind').value, wind: document.getElementById('fuel_wind').value, solar: document.getElementById('fuel_solar').value, hydro: document.getElementById('fuel_hydro').value, pumped_storage: document.getElementById('fuel_pumped_storage').value, biomass: document.getElementById('fuel_biomass').value, nuclear: document.getElementById('fuel_nuclear').value, imports: document.getElementById('fuel_imports').value, other: document.getElementById('fuel_other').value, ocg: document.getElementById('fuel_ocg').value, ccgt: document.getElementById('fuel_ccgt').value },
+                fuels: Object.fromEntries([...document.querySelectorAll('#fuel-inputs input')].map(el => [el.id.replace(/^fuel_/, ''), el.value])),
+                gas: { supply_north_sea: document.getElementById('gas_supply_north_sea').value, supply_norway: document.getElementById('gas_supply_norway').value, supply_lng: document.getElementById('gas_supply_lng').value, supply_storage: document.getElementById('gas_supply_storage').value, supply_continent: document.getElementById('gas_supply_continent').value, demand_homes: document.getElementById('gas_demand_homes').value, demand_power: document.getElementById('gas_demand_power').value, demand_industry: document.getElementById('gas_demand_industry').value, demand_exports: document.getElementById('gas_demand_exports').value, demand_storage: document.getElementById('gas_demand_storage').value, line_supply: document.getElementById('gas_line_supply').value, line_demand: document.getElementById('gas_line_demand').value, line_linepack: document.getElementById('gas_line_linepack').value, storage_low: document.getElementById('gas_storage_low').value, storage_med: document.getElementById('gas_storage_med').value, storage_high: document.getElementById('gas_storage_high').value,
+                    storage_thresh_low: parseFloat(document.getElementById('gas_storage_thresh_low').value), storage_thresh_high: parseFloat(document.getElementById('gas_storage_thresh_high').value) },
                 carbon: { low: document.getElementById('carbon_low').value, med: document.getElementById('carbon_med').value, high: document.getElementById('carbon_high').value },
                 gradients: { temp_hot: document.getElementById('grad_temp_hot').value, temp_cold: document.getElementById('grad_temp_cold').value },
                 price: { color_low: document.getElementById('price_low').value, color_med: document.getElementById('price_med').value, color_high: document.getElementById('price_high').value, thresh_low: parseInt(document.getElementById('thresh_low').value), thresh_high: parseInt(document.getElementById('thresh_high').value) },
@@ -420,9 +470,15 @@
                 }
             };
 
-            await fetch('/admin/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+            let ok = false;
+            try {
+                const res = await fetch('/admin/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+                ok = res.ok;
+            } catch (e) { ok = false; }
             const toast = document.getElementById('toast');
-            toast.classList.remove('opacity-0'); setTimeout(() => toast.classList.add('opacity-0'), 2500);
+            toast.innerText = ok ? 'Saved Successfully!' : 'Save failed. Reload the page (your login may have expired) and try again.';
+            toast.className = (ok ? 'text-[#10B981]' : 'text-[#EF4444]') + ' font-bold transition-opacity duration-300';
+            setTimeout(() => toast.classList.add('opacity-0'), ok ? 2500 : 6000);
         }
 
         async function resetDefaults() {

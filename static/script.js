@@ -415,6 +415,7 @@ function updateFuelDetailChart() {
     const timeLabels = cachedHistoryData.map(h => new Date(h.time).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}));
     
     const rawData = cachedHistoryData.map(h => {
+        if (currentSelectedFuel === 'battery') return (h.bess_discharge_mw || 0) / 1000;  // unofficial estimate, discharging only
         const f = h.mix.find(x => x.fuel === currentSelectedFuel);
         return f ? f.mw / 1000 : 0;
     });
@@ -427,19 +428,41 @@ function updateFuelDetailChart() {
     fuelDetailChartInstance = buildFullChart(fuelDetailChartInstance, 'fuelDetailChart', dataArray, timeLabels, colorStr, bgStr, true);
 }
 
+// Whether the 24-hour mix includes the unofficial battery estimate (on by default, remembered per browser)
+let showBatteryInMix = true;
+try { showBatteryInMix = localStorage.getItem('showBatteryInMix') !== 'false'; } catch (e) {}
+
+function toggleBatteryInMix() {
+    showBatteryInMix = !showBatteryInMix;
+    try { localStorage.setItem('showBatteryInMix', showBatteryInMix); } catch (e) {}
+    renderHistoryChart();
+}
+
 function renderHistoryChart() {
     if(!cachedHistoryData.length || !activeConfig) return;
+    const battBtn = document.getElementById('btn-batt-mix');
+    if (battBtn) {
+        battBtn.className = "px-3 py-1 rounded-lg border text-sm font-semibold transition " + (showBatteryInMix ? "bg-ui-grey text-white border-ui-grey" : "text-ui-light border-ui-grey hover:text-white");
+        battBtn.innerText = (showBatteryInMix ? '✓ ' : '') + 'Batteries (est.)';
+    }
     const timeLabels = cachedHistoryData.map(h => new Date(h.time).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}));
-    const apiFuels = ["nuclear", "ccgt", "ocg", "other", "imports", "biomass", "pumped_storage", "hydro", "solar", "lv_wind", "wind"];
+    const apiFuels = ["nuclear", "ccgt", "ocg", "other", "imports", "biomass", "pumped_storage", ...(showBatteryInMix ? ["battery"] : []), "hydro", "solar", "lv_wind", "wind"];
     const historyColours = { "wind": activeConfig.fuels.wind, "lv_wind": activeConfig.fuels.lv_wind || '#5FB035', "solar": activeConfig.fuels.solar, "hydro": activeConfig.fuels.hydro, "pumped_storage": activeConfig.fuels.pumped_storage, "biomass": activeConfig.fuels.biomass, "nuclear": activeConfig.fuels.nuclear, "imports": activeConfig.fuels.imports, "other": activeConfig.fuels.other, "ocg": activeConfig.fuels.ocg, "ccgt": activeConfig.fuels.ccgt };
     
+    historyColours.battery = activeConfig.fuels.battery || '#A78BFA';
+
+    // MW per fuel for each row. % is worked out here so it stays correct with the battery estimate on or off.
+    const rowsMw = cachedHistoryData.map(h => {
+        const mw = {};
+        h.mix.forEach(m => mw[m.fuel] = m.mw);
+        if (showBatteryInMix) mw.battery = h.bess_discharge_mw || 0;
+        return mw;
+    });
+    const rowTotals = rowsMw.map(mw => Object.values(mw).reduce((a, b) => a + b, 0));
+
     let datasets = apiFuels.map(fuel => ({
-        type: 'line', label: fuel.toUpperCase(),
-        data: smoothData(cachedHistoryData.map(h => { 
-            const f = h.mix.find(x => x.fuel === fuel);
-            if (!f) return 0;
-            return historyMode === 'GW' ? f.mw / 1000 : f.perc; 
-        }), 9), 
+        type: 'line', label: fuel === 'battery' ? 'BATTERIES (EST.)' : fuel.toUpperCase(),
+        data: smoothData(rowsMw.map((mw, i) => historyMode === 'GW' ? (mw[fuel] || 0) / 1000 : (rowTotals[i] ? (mw[fuel] || 0) / rowTotals[i] * 100 : 0)), 9), 
         backgroundColor: historyColours[fuel], borderColor: 'transparent', fill: true, pointRadius: 0, tension: 0.4, stack: 'generation', order: 1
     }));
     
@@ -566,6 +589,11 @@ function renderDashboardData(data) {
     document.getElementById('gen-val').innerText = formatGW(data.total_generation_mw);
     document.getElementById('net-flow-val').innerText = formatGW(Math.abs(data.net_flow_mw));
     document.getElementById('freq-val').innerText = data.grid_frequency.toFixed(3);
+    // Highlight the card when frequency is outside the operational limits set on the admin page
+    const freqOut = data.grid_frequency <= (activeConfig.frequency?.thresh_low || 49.8) || data.grid_frequency >= (activeConfig.frequency?.thresh_high || 50.2);
+    const freqLimitCol = activeConfig.frequency?.color_limit || '#F6643C';
+    document.getElementById('freq-val').style.color = freqOut ? freqLimitCol : '';
+    document.getElementById('freq-card').style.borderColor = freqOut ? freqLimitCol : '';
     
     const rawIntensity = data.carbon_history.map(h => h.intensity);
     const latestCarbon = data.carbon_intensity;
@@ -1255,8 +1283,11 @@ function renderBatteryPanel(data, timeLabels) {
     });
 }
 
-const GAS_SUPPLY_COLOURS = { 'North Sea (UK & Norway)': '#30C5D5', 'Norway (Langeled)': '#60A5FA', 'LNG': '#F050F8', 'Storage': '#00D241', 'Continent (BBL, IUK)': '#A1A1AA' };
-const GAS_DEMAND_COLOURS = { 'Homes & businesses': '#D4D4D8', 'Power stations': '#F6643C', 'Industry': '#A1A1AA', 'Exports': '#FF00A0', 'Storage injection': '#00D241' };
+// Gas chart colours come from the 'gas' section of the config (admin page)
+const GAS_SUPPLY_KEYS = { 'North Sea (UK & Norway)': 'supply_north_sea', 'Norway (Langeled)': 'supply_norway', 'LNG': 'supply_lng', 'Storage': 'supply_storage', 'Continent (BBL, IUK)': 'supply_continent' };
+const GAS_DEMAND_KEYS = { 'Homes & businesses': 'demand_homes', 'Power stations': 'demand_power', 'Industry': 'demand_industry', 'Exports': 'demand_exports', 'Storage injection': 'demand_storage' };
+const gasColours = keys => Object.fromEntries(Object.entries(keys).map(([label, key]) => [label, activeConfig.gas?.[key] || '#3F3F46']));
+const rgbaFromHex = (hex, alpha) => `rgba(${hexToRgbChannels(hex).replace(/ /g, ',')}, ${alpha})`;
 
 function gasBarChart(instance, canvasId, values, colours) {
     const labels = Object.keys(values).sort((a, b) => values[b] - values[a]);
@@ -1282,11 +1313,63 @@ function gasBarChart(instance, canvasId, values, colours) {
     });
 }
 
+// Daily storage history for the storage sparkline and chart: fetched on load, then at most hourly
+let gasStorageSeries = null, gasStorageFetchedAt = 0, sparkGasStorage, chartGasStorage;
+function withGasStorageSeries(callback) {
+    if (gasStorageSeries && Date.now() - gasStorageFetchedAt < 3600 * 1000) return callback(gasStorageSeries);
+    fetch('/api/gas/storage').then(r => r.ok ? r.json() : null).then(d => {
+        if (d && d.days && d.days.length) { gasStorageSeries = d; gasStorageFetchedAt = Date.now(); }
+        if (gasStorageSeries) callback(gasStorageSeries);
+    }).catch(() => {});
+}
+
+function toggleGasStorageChart() {
+    const el = document.getElementById('gas-storage-expanded');
+    el.classList.toggle('hidden');
+    if (!el.classList.contains('hidden') && chartGasStorage) chartGasStorage.resize();
+}
+
+function renderGasStorageCharts(series, colour) {
+    if (!document.getElementById('gasStorageSpark') || !document.getElementById('chartGasStorage')) return;  // page from before the storage charts existed
+    const recent = series.days.length - 365;
+    sparkGasStorage = buildSparkline(sparkGasStorage, 'gasStorageSpark', series.stock_gwh.slice(recent).map(v => v / 1000), series.days.slice(recent), colour, rgbaFromHex(colour, 0.1));
+
+    // One line per year, lined up by date (a leap-year calendar gives 29 Feb a slot)
+    const labels = [];
+    for (let d = new Date(Date.UTC(2024, 0, 1)); d.getUTCFullYear() === 2024; d.setUTCDate(d.getUTCDate() + 1)) labels.push(d.toLocaleDateString([], { day: 'numeric', month: 'short', timeZone: 'UTC' }));
+    const slot = iso => Math.round((Date.UTC(2024, +iso.slice(5, 7) - 1, +iso.slice(8, 10)) - Date.UTC(2024, 0, 1)) / 86400000);
+    const byYear = {};
+    series.days.forEach((day, i) => { const y = day.slice(0, 4); (byYear[y] = byYear[y] || new Array(366).fill(null))[slot(day)] = series.stock_gwh[i] / 1000; });
+    const years = Object.keys(byYear).sort(), current = years[years.length - 1];
+    const datasets = years.map((y, i) => ({
+        label: y, data: byYear[y], spanGaps: true, pointRadius: 0, tension: 0.2, fill: false,
+        borderColor: y === current ? colour : `rgba(161, 161, 170, ${(0.25 + 0.6 * i / years.length).toFixed(2)})`,
+        borderWidth: y === current ? 3 : 1.5, order: y === current ? 0 : 1
+    }));
+    if (chartGasStorage) {
+        chartGasStorage.data.datasets = datasets;
+        chartGasStorage.update();
+        return;
+    }
+    chartGasStorage = new Chart(document.getElementById('chartGasStorage').getContext('2d'), {
+        type: 'line',
+        data: { labels, datasets },
+        options: {
+            responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
+            plugins: { legend: { display: true, labels: { color: '#D4D4D8', font: { family: "'Inter', sans-serif" } } },
+                tooltip: { callbacks: { label: ctx => ctx.raw == null ? null : `${ctx.dataset.label}: ${ctx.raw.toFixed(1)} TWh` } } },
+            scales: { x: { grid: { display: false }, ticks: { color: '#A1A1AA', maxTicksLimit: 12 } }, y: { beginAtZero: true, grid: { color: '#3F3F46' }, ticks: { color: '#A1A1AA', callback: v => v + ' TWh' } } }
+        }
+    });
+}
+
 function renderGasSection(data) {
     const section = document.getElementById('gas-section');
     if (!section || data.gas === undefined) return;  // page or API from before the gas section existed
     const g = data.gas;
     if (!g) { document.getElementById('gas-power-note').innerText = 'Waiting for the first gas reading.'; return; }
+    const gc = activeConfig.gas || {};
+    const lineSupply = gc.line_supply || '#30C5D5', lineDemand = gc.line_demand || '#F6643C', lineLinepack = gc.line_linepack || '#D4D4D8';
 
     const fmt = (v, dp = 1) => v == null ? '---' : v.toLocaleString(undefined, { minimumFractionDigits: dp, maximumFractionDigits: dp });
     document.getElementById('gas-linepack').innerText = fmt(g.linepack_mcm, 0);
@@ -1295,13 +1378,30 @@ function renderGasSection(data) {
     const balance = g.supply_mcmd - g.demand_mcmd;
     document.getElementById('gas-linepack-label').innerText = `Gas held in the pipelines · ${balance >= 0 ? 'filling' : 'emptying'} at ${fmt(Math.abs(balance))} mcm/d`;
 
-    if (g.storage_stock_gwh != null && g.storage_capacity_gwh) {
-        document.getElementById('gas-storage').innerText = fmt(g.storage_stock_gwh / g.storage_capacity_gwh * 100);
-        const lng = g.lng_capacity_gwh ? ` · LNG tanks ${fmt(g.lng_stock_gwh / g.lng_capacity_gwh * 100, 0)}%` : '';
-        document.getElementById('gas-storage-label').innerText = `${fmt(g.storage_stock_gwh / 1000)} of ${fmt(g.storage_capacity_gwh / 1000)} TWh${lng}`;
+    // Storage: % of capacity, coloured by how today's stock compares with the same date in previous years
+    const st = g.storage;
+    let storageColour = '#A1A1AA';
+    if (st && st.capacity_gwh && document.getElementById('gas-storage-compare')) {
+        document.getElementById('gas-storage').innerText = fmt(st.stock_gwh / st.capacity_gwh * 100);
+        const rough = st.rough_capacity_gwh > 0 && st.rough_stock_gwh === 0 ? ' (Rough empty)' : '';
+        const lng = st.lng_capacity_gwh ? ` · LNG tanks ${fmt(st.lng_stock_gwh / st.lng_capacity_gwh * 100, 0)}%` : '';
+        document.getElementById('gas-storage-label').innerText = `${fmt(st.stock_gwh / 1000)} of ${fmt(st.capacity_gwh / 1000)} TWh${rough}${lng}`;
+        const compareEl = document.getElementById('gas-storage-compare');
+        if (st.average_gwh) {
+            const ratio = st.stock_gwh / st.average_gwh * 100;
+            const years = st.previous.map(p => p.year), first = Math.min(...years), last = Math.max(...years);
+            storageColour = ratio < (gc.storage_thresh_low ?? 75) ? gc.storage_low : ratio < (gc.storage_thresh_high ?? 100) ? gc.storage_med : gc.storage_high;
+            compareEl.innerText = `${Math.round(Math.abs(ratio - 100))}% ${ratio < 100 ? 'below' : 'above'} the ${first}–${String(last).slice(2)} average for this date` +
+                (st.lowest_on_record ? ` · lowest since at least ${first}` : '');
+        } else {
+            compareEl.innerText = '';
+        }
+        compareEl.style.color = storageColour;
+        document.getElementById('gas-storage').style.color = storageColour;
+        document.getElementById('gas-storage-card').style.borderColor = st.average_gwh ? storageColour : '';
     }
 
-    const stockDay = g.stock_gas_day ? ` Stock levels for gas day ${new Date(g.stock_gas_day + 'T12:00:00Z').toLocaleDateString([], { day: 'numeric', month: 'short' })}.` : '';
+    const stockDay = st ? ` Storage figures for gas day ${new Date(st.gas_day + 'T12:00:00Z').toLocaleDateString([], { day: 'numeric', month: 'short' })}.` : '';
     document.getElementById('gas-asof').innerText = `Source: National Gas Transmission. Flows in million m³ per day (mcm/d), latest reading ${g.flows_time} UK time.${stockDay}`;
     const stale = (Date.now() - new Date(g.updated).getTime()) > 30 * 60 * 1000;
 
@@ -1310,27 +1410,29 @@ function renderGasSection(data) {
         `Gas for power: power stations are burning about ${fmt(g.power_thermal_gw)} GW of gas, and gas plants are generating ${fmt(g.power_electric_gw)} GW of electricity` +
         (pct ? `, so roughly ${pct}% of the gas's energy is coming out as electricity (approximate: it assumes a typical calorific value and includes CHP plants).` : '.');
 
-    chartGasSupply = gasBarChart(chartGasSupply, 'gasSupplyChart', g.supply, GAS_SUPPLY_COLOURS);
-    chartGasDemand = gasBarChart(chartGasDemand, 'gasDemandChart', g.demand, GAS_DEMAND_COLOURS);
+    chartGasSupply = gasBarChart(chartGasSupply, 'gasSupplyChart', g.supply, gasColours(GAS_SUPPLY_KEYS));
+    chartGasDemand = gasBarChart(chartGasDemand, 'gasDemandChart', g.demand, gasColours(GAS_DEMAND_KEYS));
+    withGasStorageSeries(series => renderGasStorageCharts(series, storageColour));
 
     const labels = g.history.map(h => new Date(h.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
     const lp = g.history.map(h => h.linepack_mcm), sup = g.history.map(h => h.supply_mcmd), dem = g.history.map(h => h.demand_mcmd);
-    sparkGasLinepack = buildSparkline(sparkGasLinepack, 'gasLinepackSpark', lp, labels, '#D4D4D8', 'rgba(212, 212, 216, 0.1)');
-    sparkGasSupply = buildSparkline(sparkGasSupply, 'gasSupplySpark', sup, labels, '#30C5D5', 'rgba(48, 197, 213, 0.1)');
-    sparkGasDemand = buildSparkline(sparkGasDemand, 'gasDemandSpark', dem, labels, '#F6643C', 'rgba(246, 100, 60, 0.1)');
+    sparkGasLinepack = buildSparkline(sparkGasLinepack, 'gasLinepackSpark', lp, labels, lineLinepack, rgbaFromHex(lineLinepack, 0.1));
+    sparkGasSupply = buildSparkline(sparkGasSupply, 'gasSupplySpark', sup, labels, lineSupply, rgbaFromHex(lineSupply, 0.1));
+    sparkGasDemand = buildSparkline(sparkGasDemand, 'gasDemandSpark', dem, labels, lineDemand, rgbaFromHex(lineDemand, 0.1));
 
+    const lineColours = [lineSupply, lineDemand, lineLinepack];
     if (chartGasHistory) {
         chartGasHistory.data.labels = labels;
-        [sup, dem, lp].forEach((d, i) => chartGasHistory.data.datasets[i].data = d);
+        [sup, dem, lp].forEach((d, i) => { chartGasHistory.data.datasets[i].data = d; chartGasHistory.data.datasets[i].borderColor = lineColours[i]; });
         chartGasHistory.update();
         return;
     }
     chartGasHistory = new Chart(document.getElementById('chartGasHistory').getContext('2d'), {
         type: 'line',
         data: { labels, datasets: [
-            { label: 'Supply (mcm/d)', data: sup, borderColor: '#30C5D5', borderWidth: 2, pointRadius: 0, tension: 0.3, yAxisID: 'y' },
-            { label: 'Demand (mcm/d)', data: dem, borderColor: '#F6643C', borderWidth: 2, pointRadius: 0, tension: 0.3, yAxisID: 'y' },
-            { label: 'Linepack (mcm)', data: lp, borderColor: '#D4D4D8', borderDash: [5, 5], borderWidth: 2, pointRadius: 0, tension: 0.3, yAxisID: 'y1' }
+            { label: 'Supply (mcm/d)', data: sup, borderColor: lineSupply, borderWidth: 2, pointRadius: 0, tension: 0.3, yAxisID: 'y' },
+            { label: 'Demand (mcm/d)', data: dem, borderColor: lineDemand, borderWidth: 2, pointRadius: 0, tension: 0.3, yAxisID: 'y' },
+            { label: 'Linepack (mcm)', data: lp, borderColor: lineLinepack, borderDash: [5, 5], borderWidth: 2, pointRadius: 0, tension: 0.3, yAxisID: 'y1' }
         ] },
         options: {
             responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },

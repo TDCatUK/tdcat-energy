@@ -6,7 +6,7 @@ import sys
 import requests
 import sqlite3
 import json
-from datetime import datetime, timedelta, timezone, time
+from datetime import date, datetime, timedelta, timezone, time
 from zoneinfo import ZoneInfo
 import pypowerwall
 from dotenv import load_dotenv
@@ -320,8 +320,25 @@ GAS_DEMAND_NAMES = {
     'Interconnector Export Demand Flow': 'Exports',
     'Storage Demand Flow': 'Storage injection',
 }
-# Daily stock levels (kWh): storage stock, storage space left, LNG stock, LNG space left
-GAS_DAILY_ITEMS = {'PUBOBJ330': 'storage_stock', 'PUBOBJ333': 'storage_space', 'PUBOBJ336': 'lng_stock', 'PUBOBJ339': 'lng_space'}
+# Daily stock levels (kWh in the source, stored as GWh): all storage sites, LNG tanks, and Rough on its own
+GAS_DAILY_ITEMS = {'PUBOBJ330': 'storage_stock', 'PUBOBJ333': 'storage_space', 'PUBOBJ336': 'lng_stock', 'PUBOBJ339': 'lng_space',
+                   'PUBOBJ2364': 'rough_stock', 'PUBOBJ2428': 'rough_space'}
+GAS_DAILY_NAMES = {'Storage, Daily Aggregated Stock level, D+1': 'storage_stock', 'Storage, Daily Aggregated Available Capacity, D+1': 'storage_space',
+                   'LNG, Daily Aggregated Stock level, D+1': 'lng_stock', 'LNG, Daily Aggregated Available Capacity, D+1': 'lng_space',
+                   'Opening Stock, Rough, Long Range Storage': 'rough_stock', 'Available Capacity, Rough, Long Range Storage': 'rough_space'}
+GAS_STOCK_CORE = ('storage_stock', 'storage_space', 'lng_stock', 'lng_space')
+# Earliest gas day National Gas publishes these items for
+GAS_STORAGE_HISTORY_START = date(2020, 5, 25)
+
+GAS_STORAGE_TABLE = """CREATE TABLE IF NOT EXISTS gas_storage_daily (
+    gas_day TEXT PRIMARY KEY,
+    storage_stock_gwh REAL,
+    storage_space_gwh REAL,
+    lng_stock_gwh REAL,
+    lng_space_gwh REAL,
+    rough_stock_gwh REAL,
+    rough_space_gwh REAL
+)"""
 
 GAS_TABLE = """CREATE TABLE IF NOT EXISTS gas_snapshots (
     timestamp TEXT PRIMARY KEY,
@@ -368,24 +385,43 @@ def fetch_gas_flows(timeout=20):
     return {'flows_time': flows_time, 'linepack_mcm': linepack, 'supply_mcmd': total_supply, 'demand_mcmd': total_demand,
             'supply': supply, 'demand': demand}
 
-def fetch_gas_stocks(now_utc, timeout=20):
-    """Latest daily storage and LNG stock levels in GWh, with the gas day they're for."""
+def fetch_gas_daily(start, end, timeout=20):
+    """Daily stock levels between two gas days: {'YYYY-MM-DD': {item: GWh}}."""
     params = {'applicableFor': 'Y', 'dateType': 'GASDAY', 'latestFlag': 'Y', 'type': 'CSV', 'ids': ','.join(GAS_DAILY_ITEMS),
-              'dateFrom': (now_utc - timedelta(days=4)).strftime('%Y-%m-%d'), 'dateTo': now_utc.strftime('%Y-%m-%d')}
+              'dateFrom': start.isoformat(), 'dateTo': end.isoformat()}
     res = requests.get(f"{NATIONAL_GAS_API}/find-gas-data-download", params=params, headers={'User-Agent': 'Mozilla/5.0'}, timeout=timeout)
     res.raise_for_status()
-    names = {'Storage, Daily Aggregated Stock level, D+1': 'storage_stock', 'Storage, Daily Aggregated Available Capacity, D+1': 'storage_space',
-             'LNG, Daily Aggregated Stock level, D+1': 'lng_stock', 'LNG, Daily Aggregated Available Capacity, D+1': 'lng_space'}
     by_day = {}
     for row in csv.DictReader(io.StringIO(res.text)):
-        key = names.get(row.get('Data Item'))
+        key = GAS_DAILY_NAMES.get(row.get('Data Item'))
         if key and row.get('Value'):
             day = datetime.strptime(row['Applicable For'], '%d/%m/%Y').strftime('%Y-%m-%d')
             by_day.setdefault(day, {})[key] = float(row['Value']) / 1e6  # kWh -> GWh
-    complete = [d for d, v in by_day.items() if len(v) == len(names)]
-    if not complete: return None
+    return by_day
+
+def gas_storage_history_needed():
+    """True until gas_storage_daily holds the back history (filled once, on the first run that needs it)."""
+    try:
+        conn = sqlite3.connect('grid_data.db')
+        try: return conn.execute("SELECT COUNT(*) FROM gas_storage_daily").fetchone()[0] < 365
+        finally: conn.close()
+    except sqlite3.OperationalError:
+        return True  # table not created yet
+
+def fetch_gas_stocks(now_utc, timeout=20):
+    """Daily stock levels to store (the last few gas days, or the full history if it's missing),
+    plus the latest complete day's figures for the snapshot row."""
+    today = now_utc.date()
+    if gas_storage_history_needed():
+        days = {}
+        for year in range(GAS_STORAGE_HISTORY_START.year, today.year + 1):
+            days.update(fetch_gas_daily(max(date(year, 1, 1), GAS_STORAGE_HISTORY_START), min(date(year, 12, 31), today), timeout=90))
+    else:
+        days = fetch_gas_daily(today - timedelta(days=4), today, timeout)
+    complete = [d for d, v in days.items() if all(k in v for k in GAS_STOCK_CORE)]
+    if not complete: return {'daily': days}
     day = max(complete)
-    return {'stock_gas_day': day, **{f"{k}_gwh": v for k, v in by_day[day].items()}}
+    return {'daily': days, 'stock_gas_day': day, **{f"{k}_gwh": days[day][k] for k in GAS_STOCK_CORE}}
 
 def fetch_gas(now_utc, timeout=20):
     """Everything for one gas_snapshots row, or None if the live flows aren't available."""
@@ -827,6 +863,13 @@ def fetch_and_store():
                 json.dumps(gas['supply']), json.dumps(gas['demand']),
                 gas.get('stock_gas_day'), gas.get('storage_stock_gwh'), gas.get('storage_space_gwh'), gas.get('lng_stock_gwh'), gas.get('lng_space_gwh')
             ))
+            cursor.execute(GAS_STORAGE_TABLE)
+            cursor.executemany('''
+                INSERT OR REPLACE INTO gas_storage_daily
+                (gas_day, storage_stock_gwh, storage_space_gwh, lng_stock_gwh, lng_space_gwh, rough_stock_gwh, rough_space_gwh)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''', [(day, v.get('storage_stock'), v.get('storage_space'), v.get('lng_stock'), v.get('lng_space'), v.get('rough_stock'), v.get('rough_space'))
+                  for day, v in gas.get('daily', {}).items()])
         conn.commit()
         conn.close()
         print(f"-> Success! Row added.")

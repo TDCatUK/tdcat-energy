@@ -333,7 +333,8 @@
                                     <li onclick="selectFuel('ccgt', 'Gas (CCGT)')" class="p-3 text-sm hover:bg-brand-cyan hover:text-ui-darkest cursor-pointer transition text-ui-light font-medium border-b border-ui-grey/30">Gas (CCGT)</li>
                                     <li onclick="selectFuel('ocg', 'Gas (OCG)')" class="p-3 text-sm hover:bg-brand-cyan hover:text-ui-darkest cursor-pointer transition text-ui-light font-medium border-b border-ui-grey/30">Gas (OCG)</li>
                                     <li onclick="selectFuel('imports', 'Imports')" class="p-3 text-sm hover:bg-brand-cyan hover:text-ui-darkest cursor-pointer transition text-ui-light font-medium border-b border-ui-grey/30">Imports</li>
-                                    <li onclick="selectFuel('other', 'Other')" class="p-3 text-sm hover:bg-brand-cyan hover:text-ui-darkest cursor-pointer transition text-ui-light font-medium">Other</li>
+                                    <li onclick="selectFuel('other', 'Other')" class="p-3 text-sm hover:bg-brand-cyan hover:text-ui-darkest cursor-pointer transition text-ui-light font-medium border-b border-ui-grey/30">Other</li>
+                                    <li onclick="selectFuel('battery', 'Batteries (est.)')" class="p-3 text-sm hover:bg-brand-cyan hover:text-ui-darkest cursor-pointer transition text-ui-light font-medium">Batteries (est.)</li>
                                 </ul>
                             </div>
 
@@ -481,9 +482,12 @@
             <section class="bg-ui-card p-6 rounded-2xl border border-ui-grey shadow-lg">
                 <div class="flex justify-between items-end mb-6">
                     <h3 class="text-xl font-bold text-white">24-Hour Generation Mix</h3>
+                    <div class="flex flex-wrap items-center justify-end gap-3">
+                    <button id="btn-batt-mix" onclick="toggleBatteryInMix()" title="Add the unofficial grid battery estimate (discharging) to the chart" class="px-3 py-1 rounded-lg border text-sm font-semibold transition">Batteries (est.)</button>
                     <div class="bg-ui-darkest rounded-lg p-1 border border-ui-grey flex text-sm">
                         <button id="btn-gw" onclick="setHistoryMode('GW')" class="px-4 py-1 rounded bg-ui-grey text-white font-semibold transition">GW</button>
                         <button id="btn-perc" onclick="setHistoryMode('%')" class="px-4 py-1 rounded text-ui-light hover:text-white transition">%</button>
+                    </div>
                     </div>
                 </div>
                 <div class="h-[450px] w-full relative"><canvas id="historyChart"></canvas></div>
@@ -554,9 +558,20 @@
                     <div class="relative z-10 pointer-events-none"><div class="flex justify-between items-start gap-2 mb-2"><h2 class="text-sm font-semibold text-ui-light uppercase tracking-wider min-w-0">Gas Demand</h2><span class="text-xs bg-white text-ui-darkest px-2 py-0.5 rounded font-mono flex-shrink-0 whitespace-nowrap">mcm/d</span></div><p id="gas-demand" class="text-4xl xl:text-5xl font-extrabold text-white">---</p><p id="gas-demand-label" class="text-xs text-[#A1A1AA] font-medium mt-1">Out of the national system</p></div>
                     <div class="absolute inset-0 z-0 opacity-20 mt-12"><canvas id="gasDemandSpark"></canvas></div>
                 </div>
-                <div class="bg-ui-card p-6 rounded-2xl border border-ui-grey shadow-lg relative overflow-hidden flex flex-col justify-between">
-                    <div class="relative z-10 pointer-events-none"><div class="flex justify-between items-start gap-2 mb-2"><h2 class="text-sm font-semibold text-ui-light uppercase tracking-wider min-w-0">Storage</h2><span class="text-xs bg-white text-ui-darkest px-2 py-0.5 rounded font-mono flex-shrink-0 whitespace-nowrap">%</span></div><p id="gas-storage" class="text-4xl xl:text-5xl font-extrabold text-white">---</p><p id="gas-storage-label" class="text-xs text-[#A1A1AA] font-medium mt-1">---</p></div>
-                    
+                <div id="gas-storage-card" onclick="toggleGasStorageChart()" class="bg-ui-card p-6 rounded-2xl border border-ui-grey shadow-lg relative overflow-hidden flex flex-col justify-between cursor-pointer transition-colors group">
+                    <div class="absolute top-4 right-4 text-ui-grey group-hover:text-white transition-colors z-20">⤢</div>
+                    <div class="relative z-10 pointer-events-none"><div class="flex justify-between items-start gap-2 mb-2 pr-5"><h2 class="text-sm font-semibold text-ui-light uppercase tracking-wider min-w-0">Storage</h2><span class="text-xs bg-white text-ui-darkest px-2 py-0.5 rounded font-mono flex-shrink-0 whitespace-nowrap">%</span></div><p id="gas-storage" class="text-4xl xl:text-5xl font-extrabold text-white transition-colors">---</p><p id="gas-storage-label" class="text-xs text-[#A1A1AA] font-medium mt-1">---</p><p id="gas-storage-compare" class="text-xs font-semibold mt-1"></p></div>
+                    <div class="absolute inset-0 z-0 opacity-20 mt-12"><canvas id="gasStorageSpark"></canvas></div>
+                </div>
+            </section>
+
+            <section id="gas-storage-expanded" class="hidden">
+                <div class="bg-ui-card p-6 rounded-2xl border border-ui-grey shadow-lg">
+                    <div class="flex justify-between items-center mb-4">
+                        <h3 class="text-xl font-bold text-white">Gas in Storage: This Year vs Previous Years (TWh)</h3>
+                        <button onclick="toggleGasStorageChart()" class="text-ui-grey hover:text-white text-2xl">&times;</button>
+                    </div>
+                    <div class="h-[320px] w-full relative"><canvas id="chartGasStorage"></canvas></div>
                 </div>
             </section>
 

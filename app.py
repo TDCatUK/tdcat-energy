@@ -2,7 +2,7 @@ import os
 import json
 from flask import Flask, render_template, jsonify, request, send_from_directory
 import sqlite3
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from zoneinfo import ZoneInfo
 
 # Startup Flask
@@ -36,13 +36,19 @@ DEFAULT_CONFIG = {
         "uk": {"x": 460, "y": 460}, "ire": {"x": 280, "y": 460}, "fra": {"x": 510, "y": 680},
         "bel": {"x": 610, "y": 600}, "ned": {"x": 650, "y": 520}, "den": {"x": 800, "y": 380}, "nor": {"x": 680, "y": 200}
     },
-    "fuels": { "wind": "#10B981", "lv_wind": "#5FB035", "solar": "#FFD700", "hydro": "#60A5FA", "pumped_storage": "#30C5D5", "biomass": "#8B4513", "nuclear": "#A1A1AA", "imports": "#64748B", "other": "#A855F7", "ocg": "#9A3412", "ccgt": "#F6643C" },
+    "fuels": { "wind": "#10B981", "lv_wind": "#5FB035", "solar": "#FFD700", "hydro": "#60A5FA", "pumped_storage": "#30C5D5", "biomass": "#8B4513", "nuclear": "#A1A1AA", "imports": "#64748B", "other": "#A855F7", "ocg": "#9A3412", "ccgt": "#F6643C", "battery": "#A78BFA" },
     "gradients": { "temp_hot": "#EF4444", "temp_cold": "#3B82F6" },
     "carbon": { "low": "#4ADE80", "med": "#F6643C", "high": "#EF4444" },
     "price": { "color_low": "#4ADE80", "color_med": "#F6643C", "color_high": "#EF4444", "thresh_low": 50, "thresh_high": 120 },
     "da_price": { "color_low": "#4ADE80", "color_med": "#10B981", "color_high": "#EF4444", "thresh_low": 50, "thresh_high": 120 },
     "mi_price": { "color_low": "#4ADE80", "color_med": "#3B82F6", "color_high": "#EF4444", "thresh_low": 50, "thresh_high": 120 },
     "demand": { "national": "#D4D4D8", "transmission": "#60A5FA", "net": "#FDBA74", "gross": "#EF4444", "dashed": "#FFFFFF" },
+    "gas": {
+        "supply_north_sea": "#30C5D5", "supply_norway": "#60A5FA", "supply_lng": "#F050F8", "supply_storage": "#00D241", "supply_continent": "#A1A1AA",
+        "demand_homes": "#D4D4D8", "demand_power": "#F6643C", "demand_industry": "#A1A1AA", "demand_exports": "#FF00A0", "demand_storage": "#00D241",
+        "line_supply": "#30C5D5", "line_demand": "#F6643C", "line_linepack": "#D4D4D8",
+        "storage_low": "#EF4444", "storage_med": "#F6643C", "storage_high": "#4ADE80", "storage_thresh_low": 75, "storage_thresh_high": 100
+    },
     "footer": { "use1_text": "Pexels Stock Photos", "use1_url": "#", "use2_text": "Rod Allsopp", "use2_url": "#", "use3_text": "OpenWRT", "use3_url": "#", "use4_text": "Love Your Libraries", "use4_url": "#", "fol1_text": "Twitter", "fol1_url": "#", "fol2_text": "Instagram", "fol2_url": "#", "fol3_text": "Patreon", "fol3_url": "#" }
 }
 
@@ -133,6 +139,61 @@ def summarise_row(row):
 # Typical calorific value of NTS gas, used to turn gas flow into energy
 GAS_CV_MJ_PER_M3 = 39.5
 
+def storage_rows(conn):
+    """Daily storage rows with National Gas's one-off glitches removed.
+
+    The published series has odd days with zeros, or stock and capacity far off their neighbours.
+    GB storage can't move more than about 1-2 TWh a day, so a day more than 1.5 TWh (stock) or
+    10% (capacity) from the median of the surrounding week is treated as a data error and skipped.
+    """
+    try:
+        rows = [dict(r) for r in conn.execute('SELECT * FROM gas_storage_daily WHERE storage_stock_gwh IS NOT NULL AND storage_space_gwh IS NOT NULL ORDER BY gas_day')]
+    except sqlite3.OperationalError:
+        return []  # the harvester creates gas_storage_daily on its first gas reading
+    stock = [r['storage_stock_gwh'] for r in rows]
+    capacity = [r['storage_stock_gwh'] + r['storage_space_gwh'] for r in rows]
+    def median_around(values, i):
+        window = sorted(values[max(0, i - 3): i + 4])
+        return window[len(window) // 2]
+    return [r for i, r in enumerate(rows)
+            if stock[i] > 0 and abs(stock[i] - median_around(stock, i)) <= 1500
+            and abs(capacity[i] - median_around(capacity, i)) <= 0.1 * median_around(capacity, i)]
+
+def get_gas_storage(conn):
+    """Latest daily gas storage stock, compared with the same date in up to five previous years."""
+    rows = storage_rows(conn)
+    if not rows: return None
+    stock_by_day = {r['gas_day']: r['storage_stock_gwh'] for r in rows}
+    latest = dict(rows[-1])
+    day = date.fromisoformat(latest['gas_day'])
+    previous = []
+    for years_back in range(1, 6):
+        try: same_day = day.replace(year=day.year - years_back)
+        except ValueError: same_day = day.replace(year=day.year - years_back, day=28)  # 29 February
+        if same_day.isoformat() in stock_by_day:
+            previous.append({"year": same_day.year, "stock_gwh": stock_by_day[same_day.isoformat()]})
+    total = lambda stock, space: stock + space if stock is not None and space is not None else None
+    return {
+        "gas_day": latest['gas_day'],
+        "stock_gwh": latest['storage_stock_gwh'],
+        "capacity_gwh": total(latest['storage_stock_gwh'], latest['storage_space_gwh']),
+        "rough_stock_gwh": latest['rough_stock_gwh'],
+        "rough_capacity_gwh": total(latest['rough_stock_gwh'], latest['rough_space_gwh']),
+        "lng_stock_gwh": latest['lng_stock_gwh'],
+        "lng_capacity_gwh": total(latest['lng_stock_gwh'], latest['lng_space_gwh']),
+        "previous": previous,
+        "average_gwh": sum(p['stock_gwh'] for p in previous) / len(previous) if previous else None,
+        "lowest_on_record": bool(previous) and latest['storage_stock_gwh'] < min(p['stock_gwh'] for p in previous),
+    }
+
+@app.route('/api/gas/storage')
+def gas_storage_history():
+    """Daily storage stock (GWh) for every gas day on record, for the storage charts."""
+    conn = get_db_connection()
+    rows = storage_rows(conn)
+    conn.close()
+    return jsonify({"days": [r['gas_day'] for r in rows], "stock_gwh": [r['storage_stock_gwh'] for r in rows]})
+
 def get_gas(conn, gas_fired_mw):
     """Latest National Gas figures plus 24 h of history, or None before the harvester's first gas reading."""
     try:
@@ -144,7 +205,6 @@ def get_gas(conn, gas_fired_mw):
     demand = json.loads(latest['demand_json'] or '{}')
     # mcm/d of gas -> GW of fuel energy burned
     power_thermal_gw = demand.get('Power stations', 0) * GAS_CV_MJ_PER_M3 * 1000 / 86400
-    capacity = lambda stock, space: (stock + space) if stock is not None and space is not None else None
     return {
         "updated": latest['timestamp'],
         "flows_time": latest['flows_time'],
@@ -153,11 +213,7 @@ def get_gas(conn, gas_fired_mw):
         "demand_mcmd": latest['demand_mcmd'],
         "supply": json.loads(latest['supply_json'] or '{}'),
         "demand": demand,
-        "stock_gas_day": latest['stock_gas_day'],
-        "storage_stock_gwh": latest['storage_stock_gwh'],
-        "storage_capacity_gwh": capacity(latest['storage_stock_gwh'], latest['storage_space_gwh']),
-        "lng_stock_gwh": latest['lng_stock_gwh'],
-        "lng_capacity_gwh": capacity(latest['lng_stock_gwh'], latest['lng_space_gwh']),
+        "storage": get_gas_storage(conn),
         "power_thermal_gw": power_thermal_gw,
         "power_electric_gw": gas_fired_mw / 1000,
         "history": [{"time": r['timestamp'], "linepack_mcm": r['linepack_mcm'], "supply_mcmd": r['supply_mcmd'], "demand_mcmd": r['demand_mcmd']} for r in reversed(rows)]
