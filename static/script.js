@@ -565,6 +565,218 @@ function setFlowSpeed(idPrefix, gwValue) {
     anim2.setAttribute('begin', (dur / 2) + 's');
 }
 
+// ---------- When Demand Shifts & the duck curve (NESO half-hourly data, fetched at most hourly) ----------
+
+// Labelled vertical dashed lines: options.plugins.verticalMarkers = { lines: [{ index, label, colour }] }
+const verticalMarkersPlugin = {
+    id: 'verticalMarkers',
+    afterDatasetsDraw(chart, args, opts) {
+        if (!opts || !opts.lines) return;
+        const { ctx, chartArea, scales } = chart;
+        ctx.save();
+        opts.lines.forEach((m, n) => {
+            if (m.index == null || m.index < 0) return;
+            const px = scales.x.getPixelForValue(m.index);
+            ctx.strokeStyle = m.colour || '#A1A1AA'; ctx.lineWidth = 1; ctx.setLineDash([4, 4]);
+            ctx.beginPath(); ctx.moveTo(px, chartArea.top); ctx.lineTo(px, chartArea.bottom); ctx.stroke();
+            if (m.label) {
+                const right = px > (chartArea.left + chartArea.right) / 2;
+                ctx.setLineDash([]); ctx.fillStyle = m.colour || '#A1A1AA'; ctx.font = "600 10px 'Inter', sans-serif";
+                ctx.textAlign = right ? 'right' : 'left';
+                ctx.fillText(m.label, px + (right ? -4 : 4), chartArea.top + 10 + n * 12);
+            }
+        });
+        ctx.restore();
+    }
+};
+Chart.register(verticalMarkersPlugin);
+
+let demandRecentRows = null, demandRecentFetchedAt = 0, duckMonthLoaded = null, duckChart;
+const momentCharts = {};
+
+const minutesOf = text => { const [h, m] = String(text || '00:00').split(':').map(Number); return h * 60 + (m || 0); };
+const hhmm = mins => `${String(Math.floor(mins / 60) % 24).padStart(2, '0')}:${String(mins % 60).padStart(2, '0')}`;
+const dayBefore = day => { const d = new Date(day + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() - 1); return d.toISOString().slice(0, 10); };
+const signedGw = v => `${v >= 0 ? '+' : '−'}${Math.abs(v).toFixed(2)} GW`;
+const setNote = (id, text) => { const el = document.getElementById(id); if (el) el.innerText = text; };
+
+function renderDemandPatterns() {
+    if (!document.getElementById('demand-moments')) return;  // page from before these charts existed
+    if (demandRecentRows && Date.now() - demandRecentFetchedAt < 3600 * 1000) return;  // drawn already; the data changes daily
+    fetch('/api/demand/recent').then(r => r.ok ? r.json() : null).then(d => {
+        if (d && d.rows && d.rows.length) { demandRecentRows = d.rows; demandRecentFetchedAt = Date.now(); drawMoments(); }
+        if (duckMonthLoaded === null) loadDuckCurve(new Date().getMonth() + 1);
+    }).catch(() => {});
+}
+
+// Half-hourly demand (GW) in a time window, which may run past midnight, for each of the last 30 complete days
+function demandWindow(startMin, endMin) {
+    if (startMin < 0) { startMin += 1440; endMin += 1440; }
+    const slots = [];
+    for (let m = startMin; m <= endMin; m += 30) slots.push(m);
+    const days = {};
+    demandRecentRows.forEach(r => {
+        let m = minutesOf(r.t.slice(11, 16)), day = r.t.slice(0, 10);
+        if (endMin >= 1440 && m < startMin) { m += 1440; day = dayBefore(day); }
+        const i = slots.indexOf(m);
+        if (i < 0) return;
+        const d = days[day] = days[day] || { nd: new Array(slots.length).fill(null), solar: new Array(slots.length).fill(null) };
+        d.nd[i] = r.nd / 1000;
+        d.solar[i] = r.solar / 1000;
+    });
+    const keys = Object.keys(days).sort().filter(k => days[k].nd.every(v => v != null)).slice(-30);
+    const mean = series => slots.map((_, i) => keys.reduce((a, k) => a + days[k][series][i], 0) / (keys.length || 1));
+    return { slots, labels: slots.map(hhmm), keys, days, avg: mean('nd'), avgSolar: mean('solar') };
+}
+
+// Faint line per day, bold average, dashed latest day, marker lines, and bars of the half-hour-to-half-hour change
+function drawMoment(name, w, colour, markers, extra = []) {
+    const latest = w.keys[w.keys.length - 1];
+    const latestLabel = new Date(latest + 'T12:00:00Z').toLocaleDateString([], { day: 'numeric', month: 'short' });
+    const datasets = [
+        ...w.keys.map(k => ({ label: '', data: w.days[k].nd, borderColor: 'rgba(161, 161, 170, 0.18)', borderWidth: 1, pointRadius: 0, tension: 0 })),
+        ...extra,
+        { label: '30-day average', data: w.avg, borderColor: colour, borderWidth: 3, pointRadius: 0, tension: 0 },
+        { label: `Latest (${latestLabel})`, data: w.days[latest].nd, borderColor: '#FFFFFF', borderDash: [5, 4], borderWidth: 1.5, pointRadius: 0, tension: 0 }
+    ];
+    const id = 'chartMoment' + name;
+    if (momentCharts[id]) momentCharts[id].destroy();
+    momentCharts[id] = new Chart(document.getElementById(id).getContext('2d'), {
+        type: 'line',
+        data: { labels: w.labels, datasets },
+        options: {
+            responsive: true, maintainAspectRatio: false, animation: false, interaction: { mode: 'index', intersect: false },
+            plugins: { legend: { display: false }, verticalMarkers: { lines: markers },
+                tooltip: { filter: item => item.dataset.label !== '', callbacks: { label: ctx => `${ctx.dataset.label}: ${ctx.raw.toFixed(2)} GW` } } },
+            scales: { x: { grid: { display: false }, ticks: { color: '#A1A1AA', maxTicksLimit: 5, maxRotation: 0 } },
+                      y: { grid: { color: '#3F3F46' }, ticks: { color: '#A1A1AA', callback: v => v + ' GW' } } }
+        }
+    });
+
+    // Bar i is the step from half-hour i-1 to half-hour i, so the bar at a marker is the step across that time
+    const change = w.avg.map((v, i) => i ? v - w.avg[i - 1] : null);
+    const marked = markers.map(m => m.index);
+    const cid = id + 'Change';
+    if (momentCharts[cid]) momentCharts[cid].destroy();
+    momentCharts[cid] = new Chart(document.getElementById(cid).getContext('2d'), {
+        type: 'bar',
+        data: { labels: w.labels, datasets: [{ label: 'Change', data: change, borderRadius: 2,
+            backgroundColor: change.map((v, i) => marked.includes(i) ? colour : 'rgba(161, 161, 170, 0.45)') }] },
+        options: {
+            responsive: true, maintainAspectRatio: false, animation: false,
+            plugins: { legend: { display: false }, tooltip: { callbacks: {
+                title: items => `${w.labels[items[0].dataIndex - 1]} → ${w.labels[items[0].dataIndex]}`,
+                label: ctx => `Average change: ${signedGw(ctx.raw)}` } } },
+            scales: { x: { display: false }, y: { grid: { color: '#3F3F46' }, ticks: { color: '#A1A1AA', maxTicksLimit: 3, callback: v => (v > 0 ? '+' : '') + v.toFixed(1) } } }
+        }
+    });
+    return change;
+}
+
+function stepNote(change, i, time) {
+    if (i < 2) return '';
+    const after = change[i + 1] != null ? `, the one after ${signedGw(change[i + 1])}` : '';
+    return `Across ${time}, average demand steps ${signedGw(change[i])}. The half-hour before moved ${signedGw(change[i - 1])}${after}.`;
+}
+
+function drawMoments() {
+    const times = activeConfig.patterns || {};
+    const offEnd = minutesOf(times.offpeak_end || '05:30'), offStart = minutesOf(times.offpeak_start || '23:30');
+    const cyan = activeConfig.theme.brand_cyan, orange = activeConfig.theme.brand_orange, purple = activeConfig.fuels.battery || '#A78BFA';
+
+    // Morning: two hours either side of the end of off-peak
+    const morning = demandWindow(offEnd - 120, offEnd + 120);
+    if (!morning.keys.length) { setNote('moment-morning-note', 'Not enough data yet.'); return; }
+    const iEnd = morning.slots.indexOf(offEnd < 120 ? offEnd + 1440 : offEnd);
+    setNote('moment-morning-note', stepNote(drawMoment('Morning', morning, cyan, [{ index: iEnd, label: `Off-peak ends ${hhmm(offEnd)}`, colour: cyan }]), iEnd, hhmm(offEnd)));
+
+    // Evening: 15:00 to 21:00, with rooftop solar added back so the gap shows how much of the climb is the sun setting
+    const evening = demandWindow(15 * 60, 21 * 60);
+    const solarPeak = {};
+    demandRecentRows.forEach(r => { const d = r.t.slice(0, 10); solarPeak[d] = Math.max(solarPeak[d] || 0, r.solar / 1000); });
+    const fades = evening.keys.map(k => evening.days[k].solar.findIndex(v => v < 0.1 * (solarPeak[k] || 0))).filter(i => i >= 0);
+    const iFade = fades.length ? Math.round(fades.reduce((a, b) => a + b, 0) / fades.length) : -1;
+    const iPeak = evening.avg.indexOf(Math.max(...evening.avg));
+    const withSolar = { label: 'Average incl. rooftop solar', data: evening.avg.map((v, i) => v + evening.avgSolar[i]), borderColor: activeConfig.fuels.solar, borderDash: [2, 3], borderWidth: 1.5, pointRadius: 0, tension: 0 };
+    drawMoment('Evening', evening, orange, [
+        { index: iFade, label: iFade >= 0 ? `Solar fades ~${evening.labels[iFade]}` : '', colour: activeConfig.fuels.solar },
+        { index: iPeak, label: `Peak ${evening.labels[iPeak]}`, colour: orange }
+    ], [withSolar]);
+    setNote('moment-evening-note', `From 15:00 the grid's demand climbs ${(evening.avg[iPeak] - evening.avg[0]).toFixed(2)} GW to its ${evening.labels[iPeak]} peak.` +
+        (iFade >= 0 ? ` Rooftop solar has faded by about ${evening.labels[iFade]}; the dotted line adds it back, so the gap is the part of the climb caused by the sun going down.` : ''));
+
+    // Night: two hours either side of the start of off-peak (this window runs past midnight)
+    const night = demandWindow(offStart - 120, offStart + 120);
+    const iStart = night.slots.indexOf(offStart < 120 ? offStart + 1440 : offStart);
+    setNote('moment-night-note', stepNote(drawMoment('Night', night, purple, [{ index: iStart, label: `Off-peak starts ${hhmm(offStart)}`, colour: purple }]), iStart, hhmm(offStart)));
+
+    const last = morning.keys[morning.keys.length - 1];
+    setNote('moments-asof', `Source: NESO national demand, ${morning.keys.length} days to ${new Date(last + 'T12:00:00Z').toLocaleDateString([], { day: 'numeric', month: 'short' })}`);
+}
+
+function loadDuckCurve(month) {
+    const select = document.getElementById('duck-month');
+    if (!select) return;
+    if (!select.options.length) {
+        for (let m = 1; m <= 12; m++) select.add(new Option(new Date(Date.UTC(2024, m - 1, 1)).toLocaleDateString([], { month: 'long', timeZone: 'UTC' }), m));
+    }
+    select.value = month;
+    duckMonthLoaded = month;
+    fetch(`/api/demand/duck?month=${month}`).then(r => r.ok ? r.json() : null).then(d => { if (d) drawDuck(d); }).catch(() => {});
+}
+
+function drawDuck(d) {
+    const labels = Array.from({ length: 48 }, (_, i) => hhmm(i * 30));
+    const monthName = new Date(Date.UTC(2024, d.month - 1, 1)).toLocaleDateString([], { month: 'long', timeZone: 'UTC' });
+    const all = Object.keys(d.years).filter(y => d.years[y].days >= 15).sort();
+    if (!all.length) return;
+    // Every fifth year from the first, plus the latest two, keeps the chart readable
+    const shown = all.filter((y, i) => (+y - +all[0]) % 5 === 0 || i >= all.length - 2);
+    const latest = shown[shown.length - 1];
+    const gw = arr => arr.map(v => v == null ? null : v / 1000);
+    const datasets = shown.map((y, i) => ({
+        label: y, data: gw(d.years[y].nd), pointRadius: 0, tension: 0.2,
+        borderColor: y === latest ? activeConfig.theme.brand_orange : (i === shown.length - 2 ? activeConfig.theme.brand_cyan : `rgba(161, 161, 170, ${(0.3 + 0.5 * i / shown.length).toFixed(2)})`),
+        borderWidth: y === latest ? 3 : 1.5
+    }));
+    datasets.push({ label: `${latest} + rooftop solar`, data: d.years[latest].nd.map((v, i) => (v + d.years[latest].solar[i]) / 1000),
+        borderColor: activeConfig.fuels.solar, borderDash: [5, 4], borderWidth: 1.5, pointRadius: 0, tension: 0.2 });
+    // The last 30 days, when looking at the current month
+    if (demandRecentRows && d.month === new Date().getMonth() + 1) {
+        const sums = new Array(48).fill(0), counts = new Array(48).fill(0);
+        const since = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
+        demandRecentRows.filter(r => r.t.slice(0, 10) >= since).forEach(r => { const i = minutesOf(r.t.slice(11, 16)) / 30; sums[i] += r.nd / 1000; counts[i]++; });
+        datasets.push({ label: 'Last 30 days', data: sums.map((s, i) => counts[i] ? s / counts[i] : null), borderColor: '#FFFFFF', borderDash: [2, 3], borderWidth: 2, pointRadius: 0, tension: 0.2 });
+    }
+    if (duckChart) duckChart.destroy();
+    duckChart = new Chart(document.getElementById('chartDuck').getContext('2d'), {
+        type: 'line',
+        data: { labels, datasets },
+        options: {
+            responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
+            plugins: { legend: { display: true, labels: { color: '#D4D4D8', font: { family: "'Inter', sans-serif" } } },
+                tooltip: { callbacks: { label: ctx => ctx.raw == null ? null : `${ctx.dataset.label}: ${ctx.raw.toFixed(1)} GW` } } },
+            scales: { x: { grid: { display: false }, ticks: { color: '#A1A1AA', maxTicksLimit: 12, maxRotation: 0 } },
+                      y: { grid: { color: '#3F3F46' }, ticks: { color: '#A1A1AA', callback: v => v + ' GW' } } }
+        }
+    });
+
+    // Facts: the record solar share, when solar first beat the grid's demand, and how the midday dip has deepened
+    const records = d.records.filter(r => r.solar_share_pct != null);
+    const best = records.reduce((a, r) => (!a || r.solar_share_pct > a.solar_share_pct) ? r : a, null);
+    if (best) {
+        const when = new Date(best.share_date + 'T12:00:00Z').toLocaleDateString([], { day: 'numeric', month: 'long', year: 'numeric' });
+        setNote('duck-fact-share', `${best.solar_share_pct.toFixed(0)}% of GB electricity use came from rooftop solar at ${hhmm((best.share_period - 1) * 30)} on ${when}: ${(best.share_solar / 1000).toFixed(1)} GW of solar while the grid supplied ${(best.share_nd / 1000).toFixed(1)} GW.`);
+    }
+    const over = records.filter(r => r.halfhours_solar_over_nd > 0);
+    setNote('duck-fact-over', over.length
+        ? `Rooftop solar produced more than the grid itself was supplying in ${over.map(r => `${r.halfhours_solar_over_nd} half-hours in ${r.year}`).join(', ')}. It had never happened before ${over[0].year}.`
+        : `Not yet. Rooftop solar has never produced more than the grid itself was supplying.`);
+    const first = shown[0], ratio = y => (d.years[y].nd[26] / d.years[y].nd[2] - 1) * 100;
+    const describe = p => `${Math.abs(p).toFixed(0)}% ${p >= 0 ? 'above' : 'below'}`;
+    setNote('duck-fact-belly', `In ${monthName} ${first}, grid demand at 13:00 was ${describe(ratio(first))} demand at 01:00. In ${monthName} ${latest} it was ${describe(ratio(latest))}.`);
+}
+
 // Run a flow line's dots backwards (end to start) or forwards
 function setFlowDirection(idPrefix, reverse) {
     [1, 2].forEach(n => {
@@ -1230,6 +1442,7 @@ function renderDashboardData(data) {
 
     renderBatteryPanel(data, timeLabels);
     renderGasSection(data);
+    renderDemandPatterns();
 
     let bridgedIntensity = [];
     let lastValidCarbon = rawIntensity.find(v => v > 0) || 0;

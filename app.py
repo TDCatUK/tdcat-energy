@@ -2,7 +2,7 @@ import os
 import json
 from flask import Flask, render_template, jsonify, request, send_from_directory
 import sqlite3
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 # Startup Flask
@@ -43,6 +43,7 @@ DEFAULT_CONFIG = {
     "da_price": { "color_low": "#4ADE80", "color_med": "#10B981", "color_high": "#EF4444", "thresh_low": 50, "thresh_high": 120 },
     "mi_price": { "color_low": "#4ADE80", "color_med": "#3B82F6", "color_high": "#EF4444", "thresh_low": 50, "thresh_high": 120 },
     "demand": { "national": "#D4D4D8", "transmission": "#60A5FA", "net": "#FDBA74", "gross": "#EF4444", "dashed": "#FFFFFF" },
+    "patterns": { "offpeak_start": "23:30", "offpeak_end": "05:30" },
     "gas": {
         "supply_north_sea": "#30C5D5", "supply_norway": "#60A5FA", "supply_lng": "#F050F8", "supply_storage": "#00D241", "supply_continent": "#A1A1AA",
         "demand_homes": "#D4D4D8", "demand_power": "#F6643C", "demand_industry": "#A1A1AA", "demand_exports": "#FF00A0", "demand_storage": "#00D241",
@@ -221,6 +222,43 @@ def get_gas(conn, gas_fired_mw):
         "power_electric_gw": gas_fired_mw / 1000,
         "history": [{"time": r['timestamp'], "linepack_mcm": r['linepack_mcm'], "supply_mcmd": r['supply_mcmd'], "demand_mcmd": r['demand_mcmd']} for r in reversed(rows)]
     }
+
+def demand_rows(conn, sql, params=()):
+    """Rows from one of the NESO demand tables, or [] before the harvester has created it."""
+    try:
+        return conn.execute(sql, params).fetchall()
+    except sqlite3.OperationalError:
+        return []
+
+@app.route('/api/demand/recent')
+def demand_recent():
+    """National demand and rooftop solar for each half-hour of the last 31 days, stamped with the UK local start time."""
+    conn = get_db_connection()
+    rows = demand_rows(conn, "SELECT * FROM neso_demand_hh WHERE settlement_date >= date('now', '-32 days') ORDER BY settlement_date, settlement_period")
+    conn.close()
+    out = []
+    for r in rows:
+        # Settlement periods count half-hours from UK midnight, so clock-change days have 46 or 50 of them
+        midnight = datetime.combine(date.fromisoformat(r['settlement_date']), datetime.min.time(), LONDON).astimezone(timezone.utc)
+        start = (midnight + timedelta(minutes=30 * (r['settlement_period'] - 1))).astimezone(LONDON)
+        out.append({"t": start.strftime('%Y-%m-%d %H:%M'), "nd": r['nd'], "solar": r['embedded_solar']})
+    return jsonify({"rows": out})
+
+@app.route('/api/demand/duck')
+def demand_duck():
+    """Average national demand and rooftop solar through the day for one month, every year on record, plus solar records."""
+    month = request.args.get('month', type=int) or datetime.now(LONDON).month
+    conn = get_db_connection()
+    profiles = demand_rows(conn, "SELECT * FROM duck_profiles WHERE month = ? ORDER BY year, settlement_period", (month,))
+    records = demand_rows(conn, "SELECT * FROM duck_records ORDER BY year")
+    conn.close()
+    years = {}
+    for r in profiles:
+        y = years.setdefault(str(r['year']), {"nd": [None] * 48, "solar": [None] * 48, "days": 0})
+        y["nd"][r['settlement_period'] - 1] = r['nd']
+        y["solar"][r['settlement_period'] - 1] = r['embedded_solar']
+        y["days"] = max(y["days"], r['days'])
+    return jsonify({"month": month, "years": years, "records": [dict(r) for r in records]})
 
 @app.route('/api/data')
 def get_data():

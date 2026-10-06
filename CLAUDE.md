@@ -29,6 +29,8 @@ cron/launchd on OTTO (every 5 min)
    /admin        templates/admin.html  (edits config.json via POST /api/config)
    /about        templates/about.html  (explains the metrics; keep it in step with any maths changes)
    /changelog    templates/changelog.html  (public, plain-English list of changes)
+   /api/demand/recent      last 31 days of NESO half-hourly ND + rooftop solar, stamped with UK local start time
+   /api/demand/duck?month= average ND/solar by half-hour for that month, every year since 2010, plus solar records
    /api/data     latest row + last 288 rows (≈24 h) + today's Powerwall kWh totals
    /api/config   GET only (public): config.json merged over DEFAULT_CONFIG
    /admin/api/config  POST: validates and atomically replaces config.json (protected by Cloudflare Access on /admin/*)
@@ -81,6 +83,13 @@ Elexon has no battery fuel type, so `load_battery_units()` picks batteries out o
 ## National Gas (GB gas transmission)
 
 `fetch_gas()` in the harvester reads `https://data.nationalgas.com/api/latest-gas-flows` (2-min data, published every 12 min, times in UK local time) and daily stock levels from `/api/find-gas-data-download` (`PUBOBJ330`/`333` storage stock and space left, `PUBOBJ336`/`339` LNG; kWh, latest complete gas day). It writes one row per run to the `gas_snapshots` table (same `timestamp` as `energy_snapshots`), which the harvester creates itself with `CREATE TABLE IF NOT EXISTS`. Daily stock levels (all storage, LNG, and Rough via `PUBOBJ2364`/`2428`) are upserted into `gas_storage_daily` (keyed by `gas_day`). If that table has fewer than 365 rows, the harvester back-fills it from 2020-05-25, the earliest data available, in yearly requests (about 12 s, once). The source has glitches (zero days, and days with stock or capacity far off), so `storage_rows()` in `app.py` skips days more than 1.5 TWh (stock) or 10% (capacity) from their 7-day median. The raw data stays in the DB. `/api/gas/storage` serves the cleaned daily series. `get_gas_storage()` compares the latest day with the same date in up to five previous years; the colour thresholds are in config `gas.storage_thresh_low/high` (% of that average). Supply groups: LNG = Grain + Milford Haven terminals, Storage = storage entry points (incl. Rough), Continent = Bacton IPs, Norway (Langeled) = Easington Langeled entry, North Sea = the remainder of total supply. Rates are mcm/d, linepack mcm. `app.py` `get_gas()` returns `None` until the table exists. The gas-for-power % uses a fixed 39.5 MJ/m³. The full data-item catalogue is at `/api/find-gas-data-folders` (PUBOBJ IDs in each item's description). There's no gas price (SAP) in it.
+
+## NESO half-hourly demand (When Demand Shifts, Duck Curve)
+
+The harvester's `fetch_neso_demand()` runs on a timer, not every run (tracked in the `fetch_log` table; failures are logged too so they retry after the interval):
+- every 3 h: NESO "Demand Data Update" (resource `177f6fa4-…`, about 5 weeks of actuals, refreshed each morning, so it runs up to yesterday or this morning) goes into `neso_demand_hh` (date, settlement period, ND, TSD, embedded solar, embedded wind).
+- every 24 h: NESO "Historic Demand Data YYYY" (one resource per year) is summarised by month and half-hour into `duck_profiles`, with per-year solar records (max solar share of ND + solar, and half-hours where solar > ND) in `duck_records`. Missing years since 2010 are back-filled; the current year is refreshed.
+Gotchas: NESO's `datastore_search` breaks when given `fields`, so use `datastore_search_sql` (no SQL functions allowed). Settlement dates come in three formats (`2026-10-05`, `01-OCT-2020`, `01-Oct-23`); `parse_settlement_date()` handles them (don't split on "T": it's in "OCT"). Settlement periods are UK local half-hours from midnight (46 or 50 on clock-change days), so `/api/demand/recent` converts them via UTC. Don't use the dashboard's own `demand_mw` history for timing-sensitive charts: it's the latest *published* ITSDO, so 0–35 min late.
 
 ## Data sources (endpoints in `.env`)
 

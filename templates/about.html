@@ -153,6 +153,16 @@
         </section>
 
         <section class="bg-ui-card p-8 rounded-2xl border border-ui-grey shadow-lg">
+            <h2 class="text-2xl font-bold text-white mb-4 border-b border-ui-grey pb-4">When Demand Shifts &amp; the Duck Curve</h2>
+            <p class="text-sm text-ui-light mb-6 italic">Both use NESO's half-hourly national demand data, which is published the next morning, so they run up to yesterday rather than live. The duck curve history goes back to 2010.</p>
+            <ul class="space-y-4 text-ui-light leading-relaxed">
+                <li><strong class="text-white">When Demand Shifts:</strong> Close-ups of three moments when demand changes direction: the end of off-peak in the morning, the evening climb as solar fades and cooking starts, and the start of off-peak at night (the off-peak times can be set on the admin page). The data isn't smoothed, so each point is one half-hour. The bars underneath show the change from one half-hour to the next. That matters because the night shift is hidden in the level chart: demand is already falling steeply, so extra load switching on shows up as the fall pausing (a smaller bar) rather than as a bump.</li>
+                <li><strong class="text-white">The Duck Curve:</strong> The average shape of grid demand through the day for a chosen month, compared across years. Rooftop solar meets demand locally, so the grid sees less in the middle of the day. As solar has grown, this has hollowed out a midday "belly", followed by a steep evening "neck" when the sun sets and people get home, giving the duck shape first described in California. The dashed line adds rooftop solar back for the latest year, showing what the grid would see without it.</li>
+                <li><strong class="text-white">Has solar ever beaten demand?</strong> Not total demand: at its record, rooftop solar covered just over half of GB electricity use. But in 2026, for the first time, it produced more than the grid itself was supplying in a few dozen half-hours on sunny weekend middays.</li>
+            </ul>
+        </section>
+
+        <section class="bg-ui-card p-8 rounded-2xl border border-ui-grey shadow-lg">
             <h2 class="text-2xl font-bold text-white mb-4 border-b border-ui-grey pb-4">Grid Batteries (Unofficial Estimate)</h2>
             <p class="text-sm text-ui-light mb-6 italic">There's no official live figure for grid-scale batteries yet, so this dashboard estimates one from Balancing Mechanism data.</p>
 

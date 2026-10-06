@@ -162,6 +162,20 @@
             <h2 class="text-xl font-bold text-white mb-6 border-b border-ui-grey pb-4">4 Levels of Demand Colors</h2>
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4" id="demand-inputs"></div>
         </section>
+        <section class="bg-ui-card p-8 rounded-2xl border border-ui-grey shadow-lg">
+            <h2 class="text-xl font-bold text-white mb-6 border-b border-ui-grey pb-4">Off-Peak Times (When Demand Shifts)</h2>
+            <p class="text-sm text-ui-light mb-4">Marked on the morning and night charts. Use half-hour times, as tariffs switch on the half-hour.</p>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div class="flex items-center justify-between p-3 bg-ui-darkest rounded-lg border border-ui-grey/50">
+                    <span class="font-semibold text-ui-light tracking-wide uppercase text-sm">Off-peak starts</span>
+                    <input type="time" step="1800" id="pat_offpeak_start" class="bg-ui-card border border-ui-grey rounded p-1 text-white font-bold">
+                </div>
+                <div class="flex items-center justify-between p-3 bg-ui-darkest rounded-lg border border-ui-grey/50">
+                    <span class="font-semibold text-ui-light tracking-wide uppercase text-sm">Off-peak ends</span>
+                    <input type="time" step="1800" id="pat_offpeak_end" class="bg-ui-card border border-ui-grey rounded p-1 text-white font-bold">
+                </div>
+            </div>
+        </section>
 
         <section class="bg-ui-card p-8 rounded-2xl border border-ui-grey shadow-lg">
             <h2 class="text-xl font-bold text-white mb-6 border-b border-ui-grey pb-4">Carbon Impact Colors</h2>
@@ -218,6 +232,7 @@
             "niv": { "color_short": "#F6643C", "color_long": "#30C5D5" },
             "demand": { "national": "#D4D4D8", "transmission": "#60A5FA", "net": "#FDBA74", "gross": "#EF4444", "dashed": "#FFFFFF" },
             "frequency": { "color_target": "#30C5D5", "color_limit": "#F6643C", "thresh_low": 49.8, "thresh_high": 50.2 },
+            "patterns": { "offpeak_start": "23:30", "offpeak_end": "05:30" },
             "gas": {
                 "supply_north_sea": "#30C5D5", "supply_norway": "#60A5FA", "supply_lng": "#F050F8", "supply_storage": "#00D241", "supply_continent": "#A1A1AA",
                 "demand_homes": "#D4D4D8", "demand_power": "#F6643C", "demand_industry": "#A1A1AA", "demand_exports": "#FF00A0", "demand_storage": "#00D241",
@@ -368,6 +383,9 @@
 
             for (const [key, val] of Object.entries(config.fuels)) { createInput(`fuel_${key}`, key.replace('_', ' '), val, 'fuel-inputs'); }
 
+            document.getElementById('pat_offpeak_start').value = config.patterns?.offpeak_start || '23:30';
+            document.getElementById('pat_offpeak_end').value = config.patterns?.offpeak_end || '05:30';
+
             const gas = config.gas || DEFAULT_CONFIG.gas;
             createInput('gas_supply_north_sea', 'North Sea (UK & Norway)', gas.supply_north_sea || DEFAULT_CONFIG.gas.supply_north_sea, 'gas-supply-inputs');
             createInput('gas_supply_norway', 'Norway (Langeled)', gas.supply_norway || DEFAULT_CONFIG.gas.supply_norway, 'gas-supply-inputs');
@@ -447,6 +465,7 @@
                     nor: { x: parseInt(document.getElementById('map_nor_x').value), y: parseInt(document.getElementById('map_nor_y').value) }
                 },
                 fuels: Object.fromEntries([...document.querySelectorAll('#fuel-inputs input')].map(el => [el.id.replace(/^fuel_/, ''), el.value])),
+                patterns: { offpeak_start: document.getElementById('pat_offpeak_start').value || '23:30', offpeak_end: document.getElementById('pat_offpeak_end').value || '05:30' },
                 gas: { supply_north_sea: document.getElementById('gas_supply_north_sea').value, supply_norway: document.getElementById('gas_supply_norway').value, supply_lng: document.getElementById('gas_supply_lng').value, supply_storage: document.getElementById('gas_supply_storage').value, supply_continent: document.getElementById('gas_supply_continent').value, demand_homes: document.getElementById('gas_demand_homes').value, demand_power: document.getElementById('gas_demand_power').value, demand_industry: document.getElementById('gas_demand_industry').value, demand_exports: document.getElementById('gas_demand_exports').value, demand_storage: document.getElementById('gas_demand_storage').value, line_supply: document.getElementById('gas_line_supply').value, line_demand: document.getElementById('gas_line_demand').value, line_linepack: document.getElementById('gas_line_linepack').value, storage_low: document.getElementById('gas_storage_low').value, storage_med: document.getElementById('gas_storage_med').value, storage_high: document.getElementById('gas_storage_high').value,
                     storage_thresh_low: parseFloat(document.getElementById('gas_storage_thresh_low').value), storage_thresh_high: parseFloat(document.getElementById('gas_storage_thresh_high').value) },
                 carbon: { low: document.getElementById('carbon_low').value, med: document.getElementById('carbon_med').value, high: document.getElementById('carbon_high').value },

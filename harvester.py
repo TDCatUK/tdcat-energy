@@ -437,6 +437,110 @@ def fetch_gas(now_utc, timeout=20):
     return gas
 
 
+# === NESO HALF-HOURLY DEMAND (for the "When Demand Shifts" and duck-curve charts) ===
+NESO_API = "https://api.neso.energy/api/3/action"
+# Demand Data Update: about five weeks of actuals (plus a week of forecasts), refreshed each morning
+NESO_DEMAND_UPDATE = '177f6fa4-ae49-4182-81ea-0c6b35f26ca6'
+DUCK_FIRST_YEAR = 2010
+
+DEMAND_TABLES = [
+    """CREATE TABLE IF NOT EXISTS neso_demand_hh (
+        settlement_date TEXT, settlement_period INTEGER, nd REAL, tsd REAL, embedded_solar REAL, embedded_wind REAL,
+        PRIMARY KEY (settlement_date, settlement_period))""",
+    """CREATE TABLE IF NOT EXISTS duck_profiles (
+        year INTEGER, month INTEGER, settlement_period INTEGER, nd REAL, embedded_solar REAL, days INTEGER,
+        PRIMARY KEY (year, month, settlement_period))""",
+    """CREATE TABLE IF NOT EXISTS duck_records (
+        year INTEGER PRIMARY KEY, solar_share_pct REAL, share_date TEXT, share_period INTEGER,
+        share_solar REAL, share_nd REAL, halfhours_solar_over_nd INTEGER)""",
+    """CREATE TABLE IF NOT EXISTS fetch_log (name TEXT PRIMARY KEY, fetched_at TEXT)""",
+]
+
+def fetch_due(name, hours):
+    """True if `name` was last fetched more than `hours` ago, or never."""
+    try:
+        conn = sqlite3.connect('grid_data.db')
+        try: row = conn.execute("SELECT fetched_at FROM fetch_log WHERE name = ?", (name,)).fetchone()
+        finally: conn.close()
+    except sqlite3.OperationalError:
+        return True  # table not created yet
+    return not row or datetime.now(timezone.utc) - datetime.fromisoformat(row[0]) > timedelta(hours=hours)
+
+def neso_sql(sql, timeout=120):
+    """Run a read-only SQL query on NESO's data portal. (Its plain search API fails when asked for specific fields.)"""
+    res = requests.get(f"{NESO_API}/datastore_search_sql", params={'sql': sql}, timeout=timeout).json()
+    if not res.get('success'): raise ValueError(str(res.get('error'))[:200])
+    return res['result']['records']
+
+def parse_settlement_date(value):
+    """NESO settlement dates come as 2026-10-05, 01-JAN-2020 or 01-Jan-23 depending on the year."""
+    text = str(value).strip()
+    if text[:4].isdigit(): text = text[:10]  # drop any time part from ISO dates (not by splitting on 'T', which is in 'OCT')
+    for fmt in ('%Y-%m-%d', '%d-%b-%Y', '%d-%b-%y'):
+        try: return datetime.strptime(text, fmt).date()
+        except ValueError: pass
+    return None
+
+def fetch_recent_demand(timeout=60):
+    """Half-hourly actuals for the last few weeks: (date, period, ND, TSD, embedded solar, embedded wind) in MW."""
+    sql = ('SELECT "SETTLEMENT_DATE", "SETTLEMENT_PERIOD", "ND", "TSD", "EMBEDDED_SOLAR_GENERATION", "EMBEDDED_WIND_GENERATION" '
+           f'FROM "{NESO_DEMAND_UPDATE}" WHERE "FORECAST_ACTUAL_INDICATOR" = \'A\'')
+    rows = []
+    for r in neso_sql(sql, timeout):
+        day = parse_settlement_date(r['SETTLEMENT_DATE'])
+        if day and r['ND']:
+            rows.append((day.isoformat(), int(r['SETTLEMENT_PERIOD']), float(r['ND']), float(r['TSD'] or 0),
+                         float(r['EMBEDDED_SOLAR_GENERATION'] or 0), float(r['EMBEDDED_WIND_GENERATION'] or 0)))
+    return rows
+
+def summarise_demand_year(records):
+    """Average grid demand (ND) and rooftop solar by month and half-hour, plus the year's solar records."""
+    sums, best, over = {}, None, 0
+    for r in records:
+        day, period = parse_settlement_date(r['SETTLEMENT_DATE']), int(r['SETTLEMENT_PERIOD'])
+        nd, solar = float(r['ND'] or 0), float(r.get('EMBEDDED_SOLAR_GENERATION') or 0)
+        if not day or period > 48 or nd <= 0: continue
+        total = sums.setdefault((day.month, period), [0.0, 0.0, 0])
+        total[0] += nd; total[1] += solar; total[2] += 1
+        share = solar / (nd + solar)
+        if best is None or share > best[0]: best = (share, day.isoformat(), period, solar, nd)
+        if solar > nd: over += 1
+    profiles = [(month, period, t[0] / t[2], t[1] / t[2], t[2]) for (month, period), t in sorted(sums.items())]
+    return profiles, best, over
+
+def fetch_demand_history(now_utc, timeout=120):
+    """Duck-curve summaries for each year since DUCK_FIRST_YEAR not yet stored, plus the current year (its file keeps growing)."""
+    try:
+        conn = sqlite3.connect('grid_data.db')
+        try: have = {y for (y,) in conn.execute("SELECT DISTINCT year FROM duck_profiles")}
+        finally: conn.close()
+    except sqlite3.OperationalError:
+        have = set()
+    package = requests.get(f"{NESO_API}/package_show", params={'id': 'historic-demand-data'}, timeout=timeout).json()['result']
+    resources = {int(r['name'].split()[-1]): r['id'] for r in package['resources']
+                 if r['name'].startswith('Historic Demand Data') and r.get('datastore_active')}
+    years = {}
+    for year, resource_id in sorted(resources.items()):
+        if year < DUCK_FIRST_YEAR or (year in have and year != now_utc.year): continue
+        sql = f'SELECT "SETTLEMENT_DATE", "SETTLEMENT_PERIOD", "ND", "EMBEDDED_SOLAR_GENERATION" FROM "{resource_id}"'
+        years[year] = summarise_demand_year(neso_sql(sql, timeout))
+    return years
+
+def fetch_neso_demand(timeout=60):
+    """Recent half-hourly demand (every 3 hours) and the yearly duck-curve summaries (daily), when due."""
+    now_utc = datetime.now(timezone.utc)
+    out = {'attempted': []}
+    if fetch_due('neso_recent', 3):
+        out['attempted'].append('neso_recent')
+        try: out['recent'] = fetch_recent_demand(timeout)
+        except Exception as e: print(f"NESO recent demand error: {e}")
+    if fetch_due('neso_history', 24):
+        out['attempted'].append('neso_history')
+        try: out['history'] = fetch_demand_history(now_utc)
+        except Exception as e: print(f"NESO demand history error: {e}")
+    return out
+
+
 LOG_FILE = 'harvester.log'
 LOG_KEEP_DAYS = 90
 
@@ -824,6 +928,9 @@ def fetch_and_store():
         # === NATIONAL GAS ===
         gas = fetch_gas(now_utc, req_timeout)
 
+        # === NESO HALF-HOURLY DEMAND (fetched every few hours, not every run) ===
+        neso_demand = fetch_neso_demand()
+
         # === DATABASE INJECTION ===
         conn = sqlite3.connect('grid_data.db')
         cursor = conn.cursor()
@@ -870,6 +977,17 @@ def fetch_and_store():
                 VALUES (?, ?, ?, ?, ?, ?, ?)
             ''', [(day, v.get('storage_stock'), v.get('storage_space'), v.get('lng_stock'), v.get('lng_space'), v.get('rough_stock'), v.get('rough_space'))
                   for day, v in gas.get('daily', {}).items()])
+        for table in DEMAND_TABLES:
+            cursor.execute(table)
+        if neso_demand.get('recent'):
+            cursor.executemany('INSERT OR REPLACE INTO neso_demand_hh VALUES (?, ?, ?, ?, ?, ?)', neso_demand['recent'])
+        for year, (profiles, best, over) in neso_demand.get('history', {}).items():
+            cursor.execute('DELETE FROM duck_profiles WHERE year = ?', (year,))
+            cursor.executemany('INSERT INTO duck_profiles VALUES (?, ?, ?, ?, ?, ?)', [(year, *p) for p in profiles])
+            cursor.execute('INSERT OR REPLACE INTO duck_records VALUES (?, ?, ?, ?, ?, ?, ?)',
+                           (year, best[0] * 100, *best[1:], over) if best else (year, None, None, None, None, None, over))
+        # Log attempts as well as successes, so a failing source is retried after its interval rather than every run
+        cursor.executemany('INSERT OR REPLACE INTO fetch_log VALUES (?, ?)', [(name, now_utc.isoformat()) for name in neso_demand['attempted']])
         conn.commit()
         conn.close()
         print(f"-> Success! Row added.")
