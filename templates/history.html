@@ -110,18 +110,18 @@
             </section>
             <section class="bg-ui-card p-6 rounded-2xl border border-ui-grey shadow-lg">
                 <h3 class="text-xl font-bold text-white mb-1">Interconnectors</h3>
-                <p class="text-xs text-[#A1A1AA] mb-4">Average net flow: above zero GB is importing, below zero exporting.</p>
+                <p id="flow-chart-note" class="text-xs text-[#A1A1AA] mb-4">Average net flow: above zero GB is importing, below zero exporting.</p>
                 <div class="h-[260px] w-full relative"><canvas id="chartFlow"></canvas></div>
             </section>
         </div>
 
         <section class="bg-ui-card p-6 rounded-2xl border border-ui-grey shadow-lg">
             <h3 class="text-xl font-bold text-white mb-1">Home Energy</h3>
-            <p class="text-xs text-[#A1A1AA] mb-4">From the Powerwall: solar generated, home use, and energy imported from and exported to the grid.</p>
+            <p id="home-chart-note" class="text-xs text-[#A1A1AA] mb-4">From the Powerwall: solar generated, home use, and energy imported from and exported to the grid.</p>
             <div class="h-[300px] w-full relative"><canvas id="chartHome"></canvas></div>
         </section>
 
-        <p class="text-xs text-[#A1A1AA] leading-relaxed">7 days shows hourly averages; 30 days and 1 year show daily averages (UK days). Everything is worked out from the same 5-minute readings as the live dashboard, which go back to 23 April 2026. Missed or failed readings are left out rather than counted as zero. Frequency comes from the 15-second readings.</p>
+        <p class="text-xs text-[#A1A1AA] leading-relaxed">7 days shows hourly averages, 30 days daily averages (UK days), and 1 year weekly averages (Monday to Sunday; home energy as the average per day, so part weeks compare fairly). The summary boxes always use hours or days. Everything is worked out from the same 5-minute readings as the live dashboard, which go back to 23 April 2026. Missed or failed readings are left out rather than counted as zero. Frequency comes from the 15-second readings.</p>
     </main>
 
     <script src="/static/history.js"></script>

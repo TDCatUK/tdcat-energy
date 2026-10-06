@@ -219,6 +219,7 @@ function applyConfig(config) {
  //   root.style.setProperty('--color-lv-wind', config.fuels.lv_wind);
     root.style.setProperty('--color-lv-wind', config.fuels.lv_wind || '#5FB035');
     root.style.setProperty('--hydro-blue', hexToRgbChannels(config.fuels.hydro));
+    root.style.setProperty('--gas-accent', hexToRgbChannels(config.gas?.accent || '#3B82F6'));
 
     root.style.setProperty('--color-imports', config.fuels.imports);
     root.style.setProperty('--color-solar', config.fuels.solar);

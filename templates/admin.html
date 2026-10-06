@@ -137,7 +137,10 @@
         </section>
         <section class="bg-ui-card p-8 rounded-2xl border border-ui-grey shadow-lg">
             <h2 class="text-xl font-bold text-white mb-6 border-b border-ui-grey pb-4">National Gas Colors</h2>
-            <h3 class="text-brand-cyan font-bold mb-4 mt-2">Where It's Coming From</h3>
+            <h3 class="text-brand-cyan font-bold mb-4 mt-2">Section Accent</h3>
+            <p class="text-sm text-ui-light mb-4">Used faintly for the gas cards' outlines and the flame by the heading, so the gas section stands apart from the electricity data.</p>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-2" id="gas-accent-inputs"></div>
+            <h3 class="text-brand-cyan font-bold mb-4 mt-6">Where It's Coming From</h3>
             <div class="grid grid-cols-1 md:grid-cols-3 gap-4" id="gas-supply-inputs"></div>
             <h3 class="text-brand-cyan font-bold mb-4 mt-6">Where It's Going</h3>
             <div class="grid grid-cols-1 md:grid-cols-3 gap-4" id="gas-demand-inputs"></div>
@@ -236,7 +239,7 @@
             "gas": {
                 "supply_north_sea": "#30C5D5", "supply_norway": "#60A5FA", "supply_lng": "#F050F8", "supply_storage": "#00D241", "supply_continent": "#A1A1AA",
                 "demand_homes": "#D4D4D8", "demand_power": "#F6643C", "demand_industry": "#A1A1AA", "demand_exports": "#FF00A0", "demand_storage": "#00D241",
-                "line_supply": "#30C5D5", "line_demand": "#F6643C", "line_linepack": "#D4D4D8",
+                "line_supply": "#30C5D5", "line_demand": "#F6643C", "line_linepack": "#D4D4D8", "accent": "#3B82F6",
                 "storage_low": "#EF4444", "storage_med": "#F6643C", "storage_high": "#4ADE80", "storage_thresh_low": 75, "storage_thresh_high": 100
             },
             "footer": { "use1_text": "Pexels Stock Photos", "use1_url": "#", "use2_text": "Rod Allsopp", "use2_url": "#", "use3_text": "OpenWRT", "use3_url": "#", "use4_text": "Love Your Libraries", "use4_url": "#", "fol1_text": "Twitter", "fol1_url": "#", "fol2_text": "Instagram", "fol2_url": "#", "fol3_text": "Patreon", "fol3_url": "#" }
@@ -387,6 +390,7 @@
             document.getElementById('pat_offpeak_end').value = config.patterns?.offpeak_end || '05:30';
 
             const gas = config.gas || DEFAULT_CONFIG.gas;
+            createInput('gas_accent', 'Card outlines', gas.accent || DEFAULT_CONFIG.gas.accent, 'gas-accent-inputs');
             createInput('gas_supply_north_sea', 'North Sea (UK & Norway)', gas.supply_north_sea || DEFAULT_CONFIG.gas.supply_north_sea, 'gas-supply-inputs');
             createInput('gas_supply_norway', 'Norway (Langeled)', gas.supply_norway || DEFAULT_CONFIG.gas.supply_norway, 'gas-supply-inputs');
             createInput('gas_supply_lng', 'LNG', gas.supply_lng || DEFAULT_CONFIG.gas.supply_lng, 'gas-supply-inputs');
@@ -466,7 +470,7 @@
                 },
                 fuels: Object.fromEntries([...document.querySelectorAll('#fuel-inputs input')].map(el => [el.id.replace(/^fuel_/, ''), el.value])),
                 patterns: { offpeak_start: document.getElementById('pat_offpeak_start').value || '23:30', offpeak_end: document.getElementById('pat_offpeak_end').value || '05:30' },
-                gas: { supply_north_sea: document.getElementById('gas_supply_north_sea').value, supply_norway: document.getElementById('gas_supply_norway').value, supply_lng: document.getElementById('gas_supply_lng').value, supply_storage: document.getElementById('gas_supply_storage').value, supply_continent: document.getElementById('gas_supply_continent').value, demand_homes: document.getElementById('gas_demand_homes').value, demand_power: document.getElementById('gas_demand_power').value, demand_industry: document.getElementById('gas_demand_industry').value, demand_exports: document.getElementById('gas_demand_exports').value, demand_storage: document.getElementById('gas_demand_storage').value, line_supply: document.getElementById('gas_line_supply').value, line_demand: document.getElementById('gas_line_demand').value, line_linepack: document.getElementById('gas_line_linepack').value, storage_low: document.getElementById('gas_storage_low').value, storage_med: document.getElementById('gas_storage_med').value, storage_high: document.getElementById('gas_storage_high').value,
+                gas: { supply_north_sea: document.getElementById('gas_supply_north_sea').value, supply_norway: document.getElementById('gas_supply_norway').value, supply_lng: document.getElementById('gas_supply_lng').value, supply_storage: document.getElementById('gas_supply_storage').value, supply_continent: document.getElementById('gas_supply_continent').value, demand_homes: document.getElementById('gas_demand_homes').value, demand_power: document.getElementById('gas_demand_power').value, demand_industry: document.getElementById('gas_demand_industry').value, demand_exports: document.getElementById('gas_demand_exports').value, demand_storage: document.getElementById('gas_demand_storage').value, line_supply: document.getElementById('gas_line_supply').value, line_demand: document.getElementById('gas_line_demand').value, line_linepack: document.getElementById('gas_line_linepack').value, accent: document.getElementById('gas_accent').value, storage_low: document.getElementById('gas_storage_low').value, storage_med: document.getElementById('gas_storage_med').value, storage_high: document.getElementById('gas_storage_high').value,
                     storage_thresh_low: parseFloat(document.getElementById('gas_storage_thresh_low').value), storage_thresh_high: parseFloat(document.getElementById('gas_storage_thresh_high').value) },
                 carbon: { low: document.getElementById('carbon_low').value, med: document.getElementById('carbon_med').value, high: document.getElementById('carbon_high').value },
                 gradients: { temp_hot: document.getElementById('grad_temp_hot').value, temp_cold: document.getElementById('grad_temp_cold').value },

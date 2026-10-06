@@ -32,6 +32,7 @@
                 'solar-yellow': 'rgb(var(--solar-yellow) / <alpha-value>)', 
                 'wind-green': 'rgb(var(--wind-green) / <alpha-value>)', 
                 'hydro-blue': 'rgb(var(--hydro-blue) / <alpha-value>)',
+                'gas-accent': 'rgb(var(--gas-accent) / <alpha-value>)',
                 'ui-darkest': '#000000', 'ui-dark': '#1C1C1F', 'ui-card': '#252529', 'ui-grey': '#3F3F46', 'ui-light': '#D4D4D8' 
             } } }
         }
@@ -688,26 +689,26 @@
             </section>
         </div>
 
-        <div class="mt-16 mb-2 border-b border-ui-grey pb-4 flex flex-wrap justify-between items-end gap-2">
-            <h2 class="text-2xl font-bold text-white tracking-wide">National Gas Data</h2>
+        <div class="mt-16 mb-2 border-b border-gas-accent/40 pb-4 flex flex-wrap justify-between items-end gap-2">
+            <h2 class="text-2xl font-bold text-white tracking-wide"><i class="fa-solid fa-fire-flame-simple text-gas-accent text-xl mr-2"></i>National Gas Data</h2>
             <span id="gas-asof" class="text-xs text-[#A1A1AA]">Source: National Gas Transmission. Flows in million m³ per day (mcm/d).</span>
         </div>
 
         <div id="gas-section" class="flex flex-col gap-6">
             <section class="grid grid-cols-2 md:grid-cols-4 gap-6">
-                <div class="bg-ui-card p-6 rounded-2xl border border-ui-grey shadow-lg relative overflow-hidden flex flex-col justify-between">
+                <div class="bg-ui-card p-6 rounded-2xl border border-gas-accent/40 shadow-lg relative overflow-hidden flex flex-col justify-between">
                     <div class="relative z-10 pointer-events-none"><div class="flex justify-between items-start gap-2 mb-2"><h2 class="text-sm font-semibold text-ui-light uppercase tracking-wider min-w-0">Linepack</h2><span class="text-xs bg-white text-ui-darkest px-2 py-0.5 rounded font-mono flex-shrink-0 whitespace-nowrap">mcm</span></div><p id="gas-linepack" class="text-4xl xl:text-5xl font-extrabold text-white">---</p><p id="gas-linepack-label" class="text-xs text-[#A1A1AA] font-medium mt-1">Gas held in the pipelines</p></div>
                     <div class="absolute inset-0 z-0 opacity-20 mt-12"><canvas id="gasLinepackSpark"></canvas></div>
                 </div>
-                <div class="bg-ui-card p-6 rounded-2xl border border-ui-grey shadow-lg relative overflow-hidden flex flex-col justify-between">
+                <div class="bg-ui-card p-6 rounded-2xl border border-gas-accent/40 shadow-lg relative overflow-hidden flex flex-col justify-between">
                     <div class="relative z-10 pointer-events-none"><div class="flex justify-between items-start gap-2 mb-2"><h2 class="text-sm font-semibold text-ui-light uppercase tracking-wider min-w-0">Gas Supply</h2><span class="text-xs bg-white text-ui-darkest px-2 py-0.5 rounded font-mono flex-shrink-0 whitespace-nowrap">mcm/d</span></div><p id="gas-supply" class="text-4xl xl:text-5xl font-extrabold text-white">---</p><p id="gas-supply-label" class="text-xs text-[#A1A1AA] font-medium mt-1">Into the national system</p></div>
                     <div class="absolute inset-0 z-0 opacity-20 mt-12"><canvas id="gasSupplySpark"></canvas></div>
                 </div>
-                <div class="bg-ui-card p-6 rounded-2xl border border-ui-grey shadow-lg relative overflow-hidden flex flex-col justify-between">
+                <div class="bg-ui-card p-6 rounded-2xl border border-gas-accent/40 shadow-lg relative overflow-hidden flex flex-col justify-between">
                     <div class="relative z-10 pointer-events-none"><div class="flex justify-between items-start gap-2 mb-2"><h2 class="text-sm font-semibold text-ui-light uppercase tracking-wider min-w-0">Gas Demand</h2><span class="text-xs bg-white text-ui-darkest px-2 py-0.5 rounded font-mono flex-shrink-0 whitespace-nowrap">mcm/d</span></div><p id="gas-demand" class="text-4xl xl:text-5xl font-extrabold text-white">---</p><p id="gas-demand-label" class="text-xs text-[#A1A1AA] font-medium mt-1">Out of the national system</p></div>
                     <div class="absolute inset-0 z-0 opacity-20 mt-12"><canvas id="gasDemandSpark"></canvas></div>
                 </div>
-                <div id="gas-storage-card" onclick="toggleGasStorageChart()" class="bg-ui-card p-6 rounded-2xl border border-ui-grey shadow-lg relative overflow-hidden flex flex-col justify-between cursor-pointer transition-colors group">
+                <div id="gas-storage-card" onclick="toggleGasStorageChart()" class="bg-ui-card p-6 rounded-2xl border border-gas-accent/40 shadow-lg relative overflow-hidden flex flex-col justify-between cursor-pointer transition-colors group">
                     <div class="absolute top-4 right-4 text-ui-grey group-hover:text-white transition-colors z-20">⤢</div>
                     <div class="relative z-10 pointer-events-none"><div class="flex justify-between items-start gap-2 mb-2 pr-5"><h2 class="text-sm font-semibold text-ui-light uppercase tracking-wider min-w-0">Storage</h2><span class="text-xs bg-white text-ui-darkest px-2 py-0.5 rounded font-mono flex-shrink-0 whitespace-nowrap">%</span></div><p id="gas-storage" class="text-4xl xl:text-5xl font-extrabold text-white transition-colors">---</p><p id="gas-storage-label" class="text-xs text-[#A1A1AA] font-medium mt-1">---</p><p id="gas-storage-compare" class="text-xs font-semibold mt-1"></p></div>
                     <div class="absolute inset-0 z-0 opacity-20 mt-12"><canvas id="gasStorageSpark"></canvas></div>
@@ -715,7 +716,7 @@
             </section>
 
             <section id="gas-storage-expanded" class="hidden">
-                <div class="bg-ui-card p-6 rounded-2xl border border-ui-grey shadow-lg">
+                <div class="bg-ui-card p-6 rounded-2xl border border-gas-accent/40 shadow-lg">
                     <div class="flex justify-between items-center mb-4">
                         <h3 class="text-xl font-bold text-white">Gas in Storage: This Year vs Previous Years (TWh)</h3>
                         <button onclick="toggleGasStorageChart()" class="text-ui-grey hover:text-white text-2xl">&times;</button>
@@ -724,7 +725,7 @@
                 </div>
             </section>
 
-            <section class="bg-ui-card p-6 rounded-2xl border border-ui-grey shadow-lg">
+            <section class="bg-ui-card p-6 rounded-2xl border border-gas-accent/40 shadow-lg">
                 <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
                     <div>
                         <h3 class="text-xl font-bold text-white mb-4">Where It's Coming From</h3>
@@ -738,7 +739,7 @@
                 <p id="gas-power-note" class="text-sm text-ui-light mt-6 border-t border-ui-grey/50 pt-4">---</p>
             </section>
 
-            <section class="bg-ui-card p-6 rounded-2xl border border-ui-grey shadow-lg">
+            <section class="bg-ui-card p-6 rounded-2xl border border-gas-accent/40 shadow-lg">
                 <h3 class="text-xl font-bold text-white mb-4">24-Hour Gas Supply, Demand & Linepack</h3>
                 <div class="h-[300px] w-full relative"><canvas id="chartGasHistory"></canvas></div>
             </section>

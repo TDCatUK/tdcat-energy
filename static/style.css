@@ -4,6 +4,11 @@ body {
     font-family: 'Inter', sans-serif; 
 } 
 
+/* Gas section accent until the config loads (applyConfig sets it from gas.accent) */
+:root { 
+    --gas-accent: 59 130 246; 
+}
+
 .hide-scrollbar::-webkit-scrollbar { 
     display: none; 
 }

@@ -1,4 +1,4 @@
-// The History page: hourly (7 days) or daily (30 days, 1 year) averages from /api/history
+// The History page: hourly (7 days) or daily (30 days) averages from /api/history; a year is shown as weekly averages
 Chart.defaults.color = '#D4D4D8';
 Chart.defaults.font.family = "'Inter', sans-serif";
 Chart.defaults.font.size = 12;
@@ -10,7 +10,7 @@ const FUELS = [['nuclear', 'Nuclear'], ['ccgt', 'Gas (CCGT)'], ['ocg', 'Gas (OCG
 const RANGES = ['7d', '30d', '1y'];
 const GRID = '#3F3F46', MUTED = '#A1A1AA';
 
-let config = null, hist = null, mixMode = 'GW';
+let config = null, raw = null, hist = null, mixMode = 'GW';  // raw: as served; hist: what the charts show (weekly for a year)
 let range = RANGES.includes(new URLSearchParams(location.search).get('range')) ? new URLSearchParams(location.search).get('range') : '7d';
 const charts = {};
 
@@ -19,7 +19,8 @@ const hourly = () => hist.unit === 'hour';
 const dateOf = t => new Date(t * 1000);
 const dayLabel = t => dateOf(t).toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' });
 const timeLabel = t => dateOf(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-const bucketLabel = t => hourly() ? `${dayLabel(t)}, ${timeLabel(t)}` : dayLabel(t);
+const labelFor = (t, unit) => unit === 'hour' ? `${dayLabel(t)}, ${timeLabel(t)}` : unit === 'week' ? `Week of ${dayLabel(t)}` : dayLabel(t);
+const bucketLabel = t => labelFor(t, hist.unit);
 const momentLabel = t => `${dayLabel(t)} ${timeLabel(t)}`;
 const gw = mw => (mw / 1000).toFixed(1);
 const durationText = mins => {
@@ -55,17 +56,43 @@ function load() {
     Promise.all([
         config ? Promise.resolve(config) : fetch('/api/config').then(r => r.json()),
         fetch(`/api/history?range=${range}`).then(r => r.json())
-    ]).then(([c, d]) => { config = c; hist = d; render(); })
+    ]).then(([c, d]) => { config = c; raw = d; hist = range === '1y' ? toWeekly(d) : d; render(); })
       .catch(() => setText('range-note', "Couldn't load the history."));
 }
 
-// x axis: day names at midnight (hourly), dates (30 days) or month names (1 year)
+// A year of daily bars is too dense to read, so a year is shown week by week (Monday to Sunday).
+// Averages are of the days with data; home energy is the average per day, so part weeks compare fairly.
+function toWeekly(d) {
+    const weeks = [];
+    d.t.forEach((t, i) => {
+        const day = dateOf(t), monday = new Date(day.getFullYear(), day.getMonth(), day.getDate() - (day.getDay() + 6) % 7);
+        const start = Math.round(monday.getTime() / 1000);
+        if (!weeks.length || weeks[weeks.length - 1].t !== start) weeks.push({ t: start, days: [] });
+        weeks[weeks.length - 1].days.push(i);
+    });
+    const values = (arr, w) => w.days.map(i => arr[i]).filter(v => v != null);
+    const mean = arr => weeks.map(w => { const v = values(arr, w); return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null; });
+    const extreme = (arr, fn) => weeks.map(w => { const v = values(arr, w); return v.length ? fn(...v) : null; });
+    const each = obj => Object.fromEntries(Object.entries(obj).map(([k, arr]) => [k, mean(arr)]));
+    return { ...d, unit: 'week', t: weeks.map(w => w.t), days: weeks.map(w => w.days.length),
+        mix: each(d.mix), home: each(d.home),
+        demand: mean(d.demand), net_flow: mean(d.net_flow), carbon: mean(d.carbon), temp: mean(d.temp),
+        mip: mean(d.mip), mip_min: extreme(d.mip_min, Math.min), mip_max: extreme(d.mip_max, Math.max),
+        ssp: mean(d.ssp), agile_import: mean(d.agile_import), agile_export: mean(d.agile_export),
+        frequency: weeks.map(w => {
+            const f = values(d.frequency, w);
+            return f.length ? { min: Math.min(...f.map(x => x.min)), max: Math.max(...f.map(x => x.max)), outside_min: f.reduce((a, x) => a + x.outside_min, 0) / f.length } : null;
+        }) };
+}
+
+// x axis: day names at midnight (hourly), dates (30 days) or month names (weekly)
 function xScale(stacked = false) {
     return {
         stacked, grid: { display: false },
         ticks: { color: MUTED, maxRotation: 0, autoSkip: false, callback: function (v, i) {
             const d = dateOf(hist.t[i]);
             if (hourly()) return d.getHours() === 0 ? d.toLocaleDateString([], { weekday: 'short', day: 'numeric' }) : null;
+            if (hist.unit === 'week') return d.getDate() <= 7 ? d.toLocaleDateString([], { month: 'short' }) : null;
             if (hist.t.length > 60) return d.getDate() === 1 ? d.toLocaleDateString([], { month: 'short' }) : null;
             const every = Math.ceil(hist.t.length / (this.chart.width < 500 ? 4 : 10));
             return (hist.t.length - 1 - i) % every === 0 ? d.toLocaleDateString([], { day: 'numeric', month: 'short' }) : null;
@@ -81,13 +108,20 @@ function makeChart(id, config) {
     charts[id] = new Chart(canvas.getContext('2d'), config);
 }
 
-const titleCallback = items => bucketLabel(hist.t[items[0].dataIndex]);
+const titleCallback = items => {
+    const i = items[0].dataIndex;
+    return bucketLabel(hist.t[i]) + (hist.days && hist.days[i] < 7 ? ` (${hist.days[i]} days)` : '');
+};
 
 function render() {
-    const first = hist.t[0];
-    setText('range-note', !hist.t.length ? 'No data yet.'
-        : `${hourly() ? 'Hourly' : 'Daily'} averages from ${dayLabel(first)}` +
+    const first = raw.t[0];
+    setText('range-note', !raw.t.length ? 'No data yet.'
+        : `${{ hour: 'Hourly', day: 'Daily', week: 'Weekly' }[hist.unit]} averages from ${dayLabel(first)}` +
           (range === '1y' && Date.now() / 1000 - first < 360 * 86400 ? ', when the history starts' : ''));
+    setText('flow-chart-note', `Average net flow each ${hist.unit}: above zero GB is importing, below zero exporting.`);
+    setText('home-chart-note', hist.unit === 'week'
+        ? 'From the Powerwall: average per day for each week of solar generated, home use, and energy imported from and exported to the grid.'
+        : `From the Powerwall: solar generated, home use, and energy imported from and exported to the grid each ${hist.unit}.`);
     renderSummary();
     drawMix();
     drawCarbon();
@@ -98,7 +132,7 @@ function render() {
 }
 
 function renderSummary() {
-    const s = hist.summary, unit = hourly() ? 'hour' : 'day';
+    const s = raw.summary, unit = raw.unit, when = t => labelFor(t, unit);
     if (s.demand_avg != null) {
         setText('sum-demand', `${gw(s.demand_avg)} GW`);
         setText('sum-demand-note', `Peak ${gw(s.demand_peak[0])} GW (${momentLabel(s.demand_peak[1])}), lowest ${gw(s.demand_low[0])} GW (${momentLabel(s.demand_low[1])}).`);
@@ -113,20 +147,20 @@ function renderSummary() {
     }
     if (s.carbon_avg != null) {
         setText('sum-carbon', `${Math.round(s.carbon_avg)} g`);
-        setText('sum-carbon-note', `gCO₂/kWh. Greenest ${unit} ${Math.round(s.carbon_best[0])} g (${bucketLabel(s.carbon_best[1])}), highest ${Math.round(s.carbon_worst[0])} g (${bucketLabel(s.carbon_worst[1])}).`);
+        setText('sum-carbon-note', `gCO₂/kWh. Greenest ${unit} ${Math.round(s.carbon_best[0])} g (${when(s.carbon_best[1])}), highest ${Math.round(s.carbon_worst[0])} g (${when(s.carbon_worst[1])}).`);
     }
     if (s.mip_avg != null) {
         setText('sum-price', `£${s.mip_avg.toFixed(0)}/MWh`);
-        setText('sum-price-note', `Cheapest ${unit} £${s.mip_cheapest[0].toFixed(0)} (${bucketLabel(s.mip_cheapest[1])}), dearest £${s.mip_dearest[0].toFixed(0)} (${bucketLabel(s.mip_dearest[1])}).` +
+        setText('sum-price-note', `Cheapest ${unit} £${s.mip_cheapest[0].toFixed(0)} (${when(s.mip_cheapest[1])}), dearest £${s.mip_dearest[0].toFixed(0)} (${when(s.mip_dearest[1])}).` +
             (s.agile_avg != null ? ` My Agile import averaged ${s.agile_avg.toFixed(1)}p/kWh.` : ''));
     }
     const f = s.frequency;
-    setText('sum-freq-label', `Outside ${hist.low}–${hist.high} Hz`);
+    setText('sum-freq-label', `Outside ${raw.low}–${raw.high} Hz`);
     if (f) {
-        const firstFreq = hist.frequency.findIndex(x => x);
+        const firstFreq = raw.frequency.findIndex(x => x);
         setText('sum-freq', f.outside_min ? durationText(f.outside_min) : 'None');
         setText('sum-freq-note', `${f.outside_pct.toFixed(2)}% of the time. Range ${f.min.toFixed(2)}–${f.max.toFixed(2)} Hz.` +
-            (firstFreq > 0 ? ` Readings from ${dayLabel(hist.t[firstFreq])}.` : ''));
+            (firstFreq > 0 ? ` Readings from ${dayLabel(raw.t[firstFreq])}.` : ''));
     } else { setText('sum-freq', '---'); setText('sum-freq-note', 'No 15-second readings for this period yet.'); }
     const h = s.home;
     setText('sum-home', `${Math.round(h.solar).toLocaleString()} kWh`);
@@ -204,13 +238,15 @@ function drawFrequency() {
     // Always show the limits; round the axis to 0.05 Hz (bar charts would otherwise start it at 0)
     const seen = f.filter(x => x);
     const lo = Math.floor((Math.min(low, ...seen.map(x => x.min)) - 0.01) * 20) / 20, hi = Math.ceil((Math.max(high, ...seen.map(x => x.max)) + 0.01) * 20) / 20;
-    setText('freq-chart-note', `Lowest to highest reading each ${hourly() ? 'hour' : 'day'} (highlighted when outside ${low}–${high} Hz), and minutes outside those limits.`);
+    const weekly = hist.unit === 'week', perDay = weekly ? ' a day' : '';
+    // Nearly every week has a brief excursion, so weekly bars aren't highlighted; the minutes line shows how much
+    setText('freq-chart-note', `Lowest to highest reading each ${hist.unit}${weekly ? '' : ` (highlighted when outside ${low}–${high} Hz)`}, and ${weekly ? 'the average minutes a day' : 'minutes'} outside ${weekly ? `${low}–${high} Hz` : 'those limits'}.`);
     makeChart('chartFreq', {
         data: { labels: hist.t, datasets: [
-            { type: 'line', label: 'Minutes outside', data: f.map(x => x ? x.outside_min : null), borderColor: limit, borderWidth: 1.5, pointRadius: hourly() ? 0 : 2,
+            { type: 'line', label: `Minutes outside${perDay}`, data: f.map(x => x ? x.outside_min : null), borderColor: limit, borderWidth: 1.5, pointRadius: hourly() ? 0 : 2,
               pointBackgroundColor: limit, tension: 0, yAxisID: 'mins', order: 0 },
             { type: 'bar', label: 'Range', data: f.map(x => x ? [x.min, x.max] : null), yAxisID: 'hz', order: 1, borderRadius: 2,
-              backgroundColor: f.map(x => x && (x.min < low || x.max > high) ? limit : 'rgba(212, 212, 216, 0.55)') },
+              backgroundColor: f.map(x => x && !weekly && (x.min < low || x.max > high) ? limit : 'rgba(212, 212, 216, 0.55)') },
             { type: 'line', label: 'Limits', data: hist.t.map(() => low), borderColor: rgba(limit, 0.6), borderDash: [3, 3], borderWidth: 1, pointRadius: 0, yAxisID: 'hz', order: 2 },
             { type: 'line', label: '', data: hist.t.map(() => high), borderColor: rgba(limit, 0.6), borderDash: [3, 3], borderWidth: 1, pointRadius: 0, yAxisID: 'hz', order: 2 }
         ] },
@@ -220,7 +256,7 @@ function drawFrequency() {
                 tooltip: { filter: item => item.datasetIndex < 2, callbacks: { title: titleCallback, label: ctx => {
                     const x = f[ctx.dataIndex];
                     if (!x) return null;
-                    return ctx.datasetIndex === 1 ? `${x.min.toFixed(3)} to ${x.max.toFixed(3)} Hz` : `Outside the limits: ${durationText(x.outside_min)}`;
+                    return ctx.datasetIndex === 1 ? `${x.min.toFixed(3)} to ${x.max.toFixed(3)} Hz` : `Outside the limits: ${durationText(x.outside_min)}${perDay}`;
                 } } }
             },
             scales: {
@@ -256,7 +292,7 @@ function drawHome() {
         options: {
             plugins: {
                 legend: { labels: { color: '#D4D4D8', boxWidth: 12 } },
-                tooltip: { callbacks: { title: titleCallback, label: ctx => ctx.raw == null ? null : `${ctx.dataset.label}: ${ctx.raw.toFixed(hourly() ? 2 : 1)} kWh` } }
+                tooltip: { callbacks: { title: titleCallback, label: ctx => ctx.raw == null ? null : `${ctx.dataset.label}: ${ctx.raw.toFixed(hourly() ? 2 : 1)} kWh${hist.unit === 'week' ? ' a day' : ''}` } }
             },
             scales: { x: xScale(), y: { min: 0, grid: { color: GRID }, ticks: { color: MUTED, callback: v => `${v} kWh` } } }
         }
