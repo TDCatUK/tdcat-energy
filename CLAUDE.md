@@ -32,6 +32,8 @@ cron/launchd on OTTO (every 5 min)
    /status       templates/status.html  (data-source health; reads /api/status)
    /api/demand/recent      last 31 days of NESO half-hourly ND + rooftop solar, stamped with UK local start time
    /api/demand/duck?month= average ND/solar by half-hour for that month, every year since 2010, plus solar records
+   /history      templates/history.html + static/history.js (7 days hourly, 30 days / 1 year daily)
+   /api/history?range=   averages per hour or UK day plus a summary for the range
    /api/status   each source's state, last good fetch, error, 7-day hourly record (?summary=1 for the menu dot)
    /api/forecast           Agile import/export rates and the national carbon forecast from the current half-hour on
    /api/frequency?hours=   every 15-second frequency reading for the last 0.25–24 h, plus today's low/high/time outside limits
@@ -47,6 +49,7 @@ cron/launchd on OTTO (every 5 min)
 | `app.py` | Flask server, `/api/data` aggregation (mix %, kWh integration) | yes |
 | `harvester.py` | Data collector, one DB row per run | yes |
 | `static/script.js` | All rendering: doughnut, stacked history, flow SVG, map, demand breakdown, sparklines | yes |
+| `static/history.js` | The History page's charts and summary (reads `/api/history` and `/api/config`) | yes |
 | `static/style.css`, `logo.png`, `favicon.png`, `map.webp`, `robots.txt`, `sitemap.xml`, `google*.html` | Static assets / SEO | yes |
 | `templates/*.html` | Tailwind (CDN) pages | yes |
 | `config.json` | Colours, thresholds, map node positions, footer links. Rewritten live by `/admin`; tracked as a settings backup | yes |
@@ -107,6 +110,10 @@ Gotchas: NESO's `datastore_search` breaks when given `fields`, so use `datastore
 
 Every fetch in the harvester calls `report(source, ok, error, data_time)`; `save_health()` writes the results with the snapshot row (in the offline path too). `source_status` keeps one row per source: `last_ok`, `last_attempt`, `last_error` (+ `last_error_at`), `data_time` (how recent the source's own data is: ISO UTC, a date, or for gas a UK clock time) and `fails` (consecutive failures, reset on success). `source_runs` logs each run's `ok` and `failed` keys (comma lists) and its duration in `seconds`, trimmed to 90 days. Error text comes from `short_error()` and is public, so it must never include URLs or response bodies (Octopus consumption URLs contain the MPAN and meter serial). `SOURCES` in `app.py` lists the keys, names, groups and fetch intervals; a new source needs a `report()` call in the harvester and an entry there. States: `ok`; `warn` after one failure or 3 intervals without success; `fail` after 3 failures in a row or 12 intervals without success. Overall is `fail` if the harvester hasn't run for 15 minutes. Timed sources (NESO, forecasts) only appear in runs where they were due. Keys: internet, fuelinst, itsdo, frequency, system_prices, market_index, batteries, pvlive, lv_wind, carbon, carbon_forecast, neso_demand, neso_history, gas, gas_storage, powerwall, octopus_rates, agile_forecast, octopus_meters, weather, cloudflare.
 
+## History page
+
+`/api/history?range=7d|30d|1y` serves hourly buckets (7d) or UK-day buckets (30d, 1y; days are built from UTC hours, which works because UK offsets are whole hours). `refresh_history()` folds every `energy_snapshots` row into `history_hours` (in memory, keyed by UTC hour start) with `fold_row()`, which runs `summarise_row()` so the maths matches the live charts. After a Flask restart the first request rebuilds everything (~1 s for 48k rows); later requests only refold from the newest hour. `refresh_frequency()` does the same from `frequency_readings` via SQL `GROUP BY t / 3600`, and rebuilds if the limits change or older readings appear (the harvester back-fills backwards). Stored zeros from failed fetches are skipped (carbon 0, MIDP 0, Octopus import and export both 0, Powerwall all 0), and rows over `MAX_PLAUSIBLE_GEN_MW` (65 GW) are ignored. Powerwall kWh per bucket = sum over its hours of each hour's average power × 1 h. A lock guards the shared caches (Flask's server is threaded).
+
 ## Data sources (endpoints in `.env`)
 
 Elexon BMRS: FUELINST (mix + interconnectors), ITSDO (demand), system-prices (SSP + NIV), market-index (APXMIDP / N2EXMIDP), frequency stream. NESO datastore resource `db6c038f-…` (embedded wind forecast). PV_Live `gsp/0` (national solar). Carbon Intensity `/intensity`. Octopus v1 (Agile import/export unit rates, consumption). Open-Meteo forecast (mph, Europe/London).
@@ -131,7 +138,7 @@ Audit 2026-10-06. Items 1–8 were fixed the same day (see README Changes).
 10. ~~Public `POST /api/config` let anyone overwrite `config.json`.~~ Fixed 2026-10-06: saving moved to `/admin/api/config`. Cloudflare Access covers `/admin/*`, so unauthenticated requests are redirected to login before reaching Flask (checked with GET and POST). Anything new that changes data must also live under `/admin/`.
 11. ~~`datetime.utcnow()` deprecation warnings flooded `harvester.log`.~~ Fixed 2026-10-06; the old log was cleared. The log now keeps 90 days (about 30 KB/day).
 12. The stacked supply (generation + gross imports) sits a median 0.8 GW (2.4%) above the dashed demand line (ITSDO + embedded), ranging from −1.3 to +3.8 GW over a day. This comes from timing (5-min FUELINST vs half-hourly ITSDO) and modelled embedded generation; `about.html` explains it.
-13. FUELINST `Other` had a one-off 10.2 GW value in the last 30 days (normally ~0.5–1 GW): probably a bad Elexon row, not yet investigated.
+13. FUELINST `Other` had a one-off 10.2 GW value in the last 30 days (normally ~0.5–1 GW): probably a bad Elexon row, not yet investigated. Two rows add up to 334–377 GW (2026-06-04T11:15:12Z and 2026-07-07T13:00:04Z, several fuels several times too high); `MAX_PLAUSIBLE_GEN_MW` (65 GW) keeps them out of the history and the 24-hour charts.
 
 ## Testing locally (safe)
 

@@ -1,5 +1,6 @@
 import os
 import json
+import threading
 from flask import Flask, render_template, jsonify, request, send_from_directory
 import sqlite3
 from datetime import date, datetime, timedelta, timezone
@@ -118,6 +119,9 @@ def load_flows(raw):
     for f in flows:
         f['name'] = INTERCONNECTOR_NAMES.get(f['name'], f['name'])
     return flows
+
+# GB has never needed more than about 60 GW. A few stored rows add up to 300+ GW (Elexon glitches), so they're skipped.
+MAX_PLAUSIBLE_GEN_MW = 65000
 
 def summarise_row(row):
     """Generation, interconnector and demand figures for one stored snapshot.
@@ -422,6 +426,190 @@ def status():
         "groups": groups,
     })
 
+# === LONGER HISTORY (the /history page) ===
+# Every stored 5-minute row is folded into hourly sums once, then topped up as new rows arrive. Flask keeps
+# them in memory, so a restart rebuilds them (about a second). Days are combined from hours, and each row
+# goes through summarise_row(), so the history uses the same maths as the live charts.
+HISTORY_COLUMNS = ('timestamp, generation_mix, interconnector_flows, demand_mw, carbon_intensity, market_index_price, wholesale_price, '
+                   'oct_import_pence, oct_export_pence, pw_solar_w, pw_home_w, pw_grid_w, pw_battery_w, pw_level, temp_c, bess_discharge_mw, bess_charge_mw')
+MIX_KEYS = sorted(set(FUEL_KEYS.values()) | {"imports"})
+history_lock = threading.Lock()
+history_hours = {}   # UTC hour start (unix seconds) -> {"sum": {}, "n": {}, "max": {}, "min": {}}
+history_upto = None  # start of the newest hour folded in; refolded on the next refresh as it fills up
+freq_hours = {}      # UTC hour start -> (lowest Hz, highest Hz, readings, readings outside the limits)
+freq_state = {"limits": None, "earliest": None, "upto": None}
+
+def fold_row(row):
+    """Add one snapshot to its hour. Failed fetches were stored as 0, so zeros are skipped where 0 isn't a real value."""
+    t = int(parse_utc(row['timestamp']).timestamp())
+    h = history_hours.setdefault(t // 3600 * 3600, {"sum": {}, "n": {}, "max": {}, "min": {}})
+    def add(key, value):
+        h["sum"][key] = h["sum"].get(key, 0) + value
+        h["n"][key] = h["n"].get(key, 0) + 1
+    def extreme(key, value):
+        if key not in h["max"] or value > h["max"][key][0]: h["max"][key] = (value, t)
+        if key not in h["min"] or value < h["min"][key][0]: h["min"][key] = (value, t)
+
+    s = summarise_row(row)
+    if s['total_gen_mw'] - s['embedded_mw'] >= 1000 and s['total_gen_mw'] <= MAX_PLAUSIBLE_GEN_MW:  # a row where a sane Elexon mix arrived
+        by_fuel = {}
+        for label, mw in s['gen'].items():
+            by_fuel[FUEL_KEYS.get(label, "other")] = by_fuel.get(FUEL_KEYS.get(label, "other"), 0) + mw
+        by_fuel["imports"] = s['imports_mw']
+        for key in MIX_KEYS:
+            add("mix:" + key, by_fuel.get(key, 0))
+        add("net_flow", s['net_flow_mw'])
+        extreme("wind", by_fuel.get("wind", 0) + by_fuel.get("lv_wind", 0))
+        extreme("solar", by_fuel.get("solar", 0))
+        transmission = (row['demand_mw'] or 0) - s['embedded_mw']
+        if transmission >= 1000:
+            add("demand", transmission + s['embedded_mw'])
+            extreme("demand", transmission + s['embedded_mw'])
+    if row['bess_discharge_mw'] is not None:
+        add("mix:battery", row['bess_discharge_mw'])
+    if row['carbon_intensity']:
+        add("carbon", row['carbon_intensity'])
+    if row['market_index_price']:
+        add("mip", row['market_index_price'])
+        extreme("mip", row['market_index_price'])
+    if row['wholesale_price']:
+        add("ssp", row['wholesale_price'])
+    if row['oct_import_pence'] or row['oct_export_pence']:
+        add("agile_import", row['oct_import_pence'] or 0)
+        add("agile_export", row['oct_export_pence'] or 0)
+    pw = [row['pw_solar_w'] or 0, row['pw_home_w'] or 0, row['pw_grid_w'] or 0, row['pw_battery_w'] or 0]
+    if any(pw) or (row['pw_level'] or 0) > 0:  # all zeros means the Powerwall wasn't reachable
+        solar, home, grid, battery = pw
+        for key, watts in (("pw_solar", max(0, solar)), ("pw_home", home), ("pw_import", max(0, grid)), ("pw_export", max(0, -grid)),
+                           ("pw_batt_out", max(0, battery)), ("pw_batt_in", max(0, -battery))):
+            add(key, watts)
+    if row['temp_c'] is not None:
+        add("temp", row['temp_c'])
+
+def refresh_history(conn):
+    """Fold in rows since the last refresh, redoing the newest hour."""
+    global history_upto
+    if history_upto:
+        cutoff = int(parse_utc(history_upto).timestamp())
+        for hour in [k for k in history_hours if k >= cutoff]: del history_hours[hour]
+    rows = conn.execute(f'SELECT {HISTORY_COLUMNS} FROM energy_snapshots WHERE timestamp >= ? ORDER BY timestamp', (history_upto or '',)).fetchall()
+    for row in rows: fold_row(row)
+    if rows:
+        history_upto = parse_utc(rows[-1]['timestamp']).replace(minute=0, second=0).strftime('%Y-%m-%dT%H:%M:%SZ')
+
+def refresh_frequency(conn, low, high):
+    """Hourly low, high and time outside the limits from the 15-second readings. Rebuilt if the limits
+    change or older readings appear (the harvester back-fills history a week at a time)."""
+    try:
+        earliest = conn.execute('SELECT MIN(t) FROM frequency_readings').fetchone()[0]
+    except sqlite3.OperationalError:
+        return  # the harvester creates the table on its first run
+    if freq_state["limits"] != (low, high) or (earliest is not None and freq_state["earliest"] is not None and earliest < freq_state["earliest"]):
+        freq_hours.clear()
+        freq_state.update(limits=(low, high), upto=None)
+    freq_state["earliest"] = earliest
+    for hour, lowest, highest, count, outside in conn.execute(
+            'SELECT t / 3600 * 3600, MIN(hz), MAX(hz), COUNT(*), SUM(hz < ? OR hz > ?) FROM frequency_readings WHERE t >= ? GROUP BY t / 3600',
+            (low, high, freq_state["upto"] or 0)):
+        freq_hours[hour] = (lowest, highest, count, outside)
+        freq_state["upto"] = max(freq_state["upto"] or 0, hour)
+
+def combine(hours):
+    """Sums, counts and extremes for a set of hours, plus Powerwall energy (each hour's average power x 1 hour)."""
+    out = {"sum": {}, "n": {}, "max": {}, "min": {}, "kwh": {}}
+    for hour in hours:
+        h = history_hours.get(hour)
+        if not h: continue
+        for key, value in h["sum"].items():
+            out["sum"][key] = out["sum"].get(key, 0) + value
+            out["n"][key] = out["n"].get(key, 0) + h["n"][key]
+            if key.startswith("pw_"):
+                out["kwh"][key] = out["kwh"].get(key, 0) + value / h["n"][key] / 1000
+        for key, (value, t) in h["max"].items():
+            if key not in out["max"] or value > out["max"][key][0]: out["max"][key] = (value, t)
+        for key, (value, t) in h["min"].items():
+            if key not in out["min"] or value < out["min"][key][0]: out["min"][key] = (value, t)
+    return out
+
+def combine_frequency(hours):
+    rows = [freq_hours[h] for h in hours if h in freq_hours]
+    if not rows: return None
+    count, outside = sum(r[2] for r in rows), sum(r[3] for r in rows)
+    return {"min": min(r[0] for r in rows), "max": max(r[1] for r in rows), "readings": count,
+            "outside_min": outside * 15 / 60, "outside_pct": outside / count * 100}
+
+def average(c, key):
+    return c["sum"][key] / c["n"][key] if c["n"].get(key) else None
+
+@app.route('/history')
+def history_page(): return render_template('history.html')
+
+@app.route('/api/history')
+def history():
+    """Averages for the last 7 days (hourly), 30 days or a year (daily, UK days), plus a summary of the whole range."""
+    span = request.args.get('range', '7d')
+    days = {'7d': 7, '30d': 30, '1y': 365}.get(span, 7)
+    limits = load_config()['frequency']
+    low, high = float(limits['thresh_low']), float(limits['thresh_high'])
+    now = datetime.now(timezone.utc)
+    if days == 7:
+        first = int(now.replace(minute=0, second=0, microsecond=0).timestamp()) - 167 * 3600
+        buckets = [(first + 3600 * i, [first + 3600 * i]) for i in range(168)]
+    else:
+        today = datetime.now(LONDON).date()
+        buckets = []
+        for back in range(days - 1, -1, -1):
+            day = today - timedelta(days=back)
+            start = int(datetime.combine(day, datetime.min.time(), LONDON).timestamp())
+            end = int(datetime.combine(day + timedelta(days=1), datetime.min.time(), LONDON).timestamp())
+            buckets.append((start, list(range(start, end, 3600))))
+
+    with history_lock:
+        conn = get_db_connection()
+        try:
+            refresh_history(conn)
+            refresh_frequency(conn, low, high)
+        finally:
+            conn.close()
+        # Start at the first bucket with data (the database begins on 23 April 2026)
+        while buckets and not any(h in history_hours for h in buckets[0][1]): buckets.pop(0)
+        combined = [combine(hours) for _, hours in buckets]
+        frequency = [combine_frequency(hours) for _, hours in buckets]
+        whole = combine([h for _, hours in buckets for h in hours])
+        whole_frequency = combine_frequency([h for _, hours in buckets for h in hours])
+
+    series = lambda key: [average(c, key) for c in combined]
+    kwh = lambda key: [c["kwh"].get(key) for c in combined]
+    supply = sum(whole["sum"].get("mix:" + k, 0) for k in MIX_KEYS)
+    share = lambda *keys: sum(whole["sum"].get("mix:" + k, 0) for k in keys) / supply * 100 if supply else None
+    def best(key, highest):
+        """The bucket with the highest (or lowest) average for `key`."""
+        values = [(v, buckets[i][0]) for i, v in enumerate(series(key)) if v is not None]
+        return (max if highest else min)(values) if values else None
+    totals = {k: sum(v or 0 for v in kwh(k)) for k in ("pw_solar", "pw_home", "pw_import", "pw_export")}
+    return jsonify({
+        "range": span, "unit": "hour" if days == 7 else "day", "low": low, "high": high,
+        "t": [start for start, _ in buckets],
+        "mix": {k: series("mix:" + k) for k in MIX_KEYS + ["battery"]},
+        "demand": series("demand"), "net_flow": series("net_flow"), "carbon": series("carbon"),
+        "mip": series("mip"), "mip_min": [c["min"].get("mip", (None,))[0] for c in combined], "mip_max": [c["max"].get("mip", (None,))[0] for c in combined],
+        "ssp": series("ssp"), "agile_import": series("agile_import"), "agile_export": series("agile_export"),
+        "frequency": frequency,
+        "home": {k[3:]: kwh(k) for k in ("pw_solar", "pw_home", "pw_import", "pw_export", "pw_batt_in", "pw_batt_out")},
+        "temp": series("temp"),
+        "summary": {
+            "demand_avg": average(whole, "demand"), "demand_peak": whole["max"].get("demand"), "demand_low": whole["min"].get("demand"),
+            "wind_max": whole["max"].get("wind"), "solar_max": whole["max"].get("solar"),
+            "share": {"wind": share("wind", "lv_wind"), "solar": share("solar"), "gas": share("ccgt", "ocg"), "nuclear": share("nuclear"),
+                      "imports": share("imports"), "low_carbon": share("wind", "lv_wind", "solar", "hydro", "nuclear", "biomass")},
+            "carbon_avg": average(whole, "carbon"), "carbon_best": best("carbon", False), "carbon_worst": best("carbon", True),
+            "mip_avg": average(whole, "mip"), "mip_cheapest": best("mip", False), "mip_dearest": best("mip", True),
+            "agile_avg": average(whole, "agile_import"),
+            "frequency": whole_frequency,
+            "home": {k[3:]: v for k, v in totals.items()},
+        },
+    })
+
 @app.route('/api/data')
 def get_data():
     conn = get_db_connection()
@@ -467,8 +655,9 @@ def get_data():
         row = dict(raw_row)
         s = summarise_row(row)
 
-        # An Elexon timeout leaves a row with only Solar/LV Wind in the mix: reuse the last good supply picture
-        if prev and s['total_gen_mw'] - s['embedded_mw'] < 1000:
+        # An Elexon timeout leaves a row with only Solar/LV Wind in the mix, and a glitch can add up to an impossible total:
+        # reuse the last good supply picture
+        if prev and (s['total_gen_mw'] - s['embedded_mw'] < 1000 or s['total_gen_mw'] > MAX_PLAUSIBLE_GEN_MW):
             s = dict(prev)
         # demand_mw is stored as ITSDO + embedded solar + LV wind, so take the embedded part back off
         s['transmission_mw'] = (row['demand_mw'] or 0) - s['embedded_mw']
