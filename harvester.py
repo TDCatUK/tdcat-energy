@@ -508,8 +508,29 @@ def summarise_demand_year(records):
     profiles = [(month, period, t[0] / t[2], t[1] / t[2], t[2]) for (month, period), t in sorted(sums.items())]
     return profiles, best, over
 
-def fetch_demand_history(now_utc, timeout=120):
-    """Duck-curve summaries for each year since DUCK_FIRST_YEAR not yet stored, plus the current year (its file keeps growing)."""
+def recent_demand_rows(since, recent=None):
+    """Demand Data Update rows on or after `since` (stored ones plus any just fetched) as (date, period, ND, solar)."""
+    rows = {}
+    try:
+        conn = sqlite3.connect('grid_data.db')
+        try:
+            for day, period, nd, solar in conn.execute(
+                    "SELECT settlement_date, settlement_period, nd, embedded_solar FROM neso_demand_hh WHERE settlement_date >= ?", (since,)):
+                rows[(day, period)] = (day, period, nd, solar)
+        finally: conn.close()
+    except sqlite3.OperationalError:
+        pass  # table not created yet
+    for day, period, nd, tsd, solar, wind in (recent or []):
+        if day >= since: rows[(day, period)] = (day, period, nd, solar)
+    return list(rows.values())
+
+def fetch_demand_history(now_utc, recent=None, timeout=120):
+    """Duck-curve summaries for each year since DUCK_FIRST_YEAR not yet stored, plus the current year.
+
+    NESO's yearly file runs a few weeks behind, so for the current year every day after the file ends
+    is filled in from the fresher Demand Data Update rows. New records then show up within a day,
+    and no half-hour is counted twice.
+    """
     try:
         conn = sqlite3.connect('grid_data.db')
         try: have = {y for (y,) in conn.execute("SELECT DISTINCT year FROM duck_profiles")}
@@ -520,10 +541,19 @@ def fetch_demand_history(now_utc, timeout=120):
     resources = {int(r['name'].split()[-1]): r['id'] for r in package['resources']
                  if r['name'].startswith('Historic Demand Data') and r.get('datastore_active')}
     years = {}
-    for year, resource_id in sorted(resources.items()):
+    for year in sorted(set(resources) | {now_utc.year}):
         if year < DUCK_FIRST_YEAR or (year in have and year != now_utc.year): continue
-        sql = f'SELECT "SETTLEMENT_DATE", "SETTLEMENT_PERIOD", "ND", "EMBEDDED_SOLAR_GENERATION" FROM "{resource_id}"'
-        years[year] = summarise_demand_year(neso_sql(sql, timeout))
+        records = []
+        if year in resources:
+            sql = f'SELECT "SETTLEMENT_DATE", "SETTLEMENT_PERIOD", "ND", "EMBEDDED_SOLAR_GENERATION" FROM "{resources[year]}"'
+            records = neso_sql(sql, timeout)
+        if year == now_utc.year:
+            dates = [d for d in (parse_settlement_date(r['SETTLEMENT_DATE']) for r in records) if d]
+            file_ends = max(dates).isoformat() if dates else f'{year - 1}-12-31'
+            records += [{'SETTLEMENT_DATE': day, 'SETTLEMENT_PERIOD': period, 'ND': nd, 'EMBEDDED_SOLAR_GENERATION': solar}
+                        for day, period, nd, solar in recent_demand_rows(f'{year}-01-01', recent) if day > file_ends]
+        if records:
+            years[year] = summarise_demand_year(records)
     return years
 
 def fetch_neso_demand(timeout=60):
@@ -536,7 +566,7 @@ def fetch_neso_demand(timeout=60):
         except Exception as e: print(f"NESO recent demand error: {e}")
     if fetch_due('neso_history', 24):
         out['attempted'].append('neso_history')
-        try: out['history'] = fetch_demand_history(now_utc)
+        try: out['history'] = fetch_demand_history(now_utc, out.get('recent'))
         except Exception as e: print(f"NESO demand history error: {e}")
     return out
 

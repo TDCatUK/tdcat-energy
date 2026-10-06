@@ -605,7 +605,8 @@ function renderDemandPatterns() {
     if (demandRecentRows && Date.now() - demandRecentFetchedAt < 3600 * 1000) return;  // drawn already; the data changes daily
     fetch('/api/demand/recent').then(r => r.ok ? r.json() : null).then(d => {
         if (d && d.rows && d.rows.length) { demandRecentRows = d.rows; demandRecentFetchedAt = Date.now(); drawMoments(); }
-        if (duckMonthLoaded === null) loadDuckCurve(new Date().getMonth() + 1);
+        // Redraw the duck curve too: its last-30-days line and the solar records change daily
+        loadDuckCurve(duckMonthLoaded === null ? new Date().getMonth() + 1 : duckMonthLoaded);
     }).catch(() => {});
 }
 
@@ -766,7 +767,11 @@ function drawDuck(d) {
     const best = records.reduce((a, r) => (!a || r.solar_share_pct > a.solar_share_pct) ? r : a, null);
     if (best) {
         const when = new Date(best.share_date + 'T12:00:00Z').toLocaleDateString([], { day: 'numeric', month: 'long', year: 'numeric' });
-        setNote('duck-fact-share', `${best.solar_share_pct.toFixed(0)}% of GB electricity use came from rooftop solar at ${hhmm((best.share_period - 1) * 30)} on ${when}: ${(best.share_solar / 1000).toFixed(1)} GW of solar while the grid supplied ${(best.share_nd / 1000).toFixed(1)} GW.`);
+        // Flag a record set in the last two weeks
+        const isNew = Date.now() - new Date(best.share_date + 'T12:00:00Z').getTime() < 14 * 86400000;
+        document.getElementById('duck-fact-share').innerHTML =
+            (isNew ? `<span class="inline-block text-[10px] uppercase tracking-widest font-bold px-1.5 py-0.5 rounded mr-1 text-ui-darkest" style="background: ${activeConfig.theme.brand_orange};">New record</span>` : '') +
+            `${best.solar_share_pct.toFixed(0)}% of GB electricity use came from rooftop solar at ${hhmm((best.share_period - 1) * 30)} on ${when}: ${(best.share_solar / 1000).toFixed(1)} GW of solar while the grid supplied ${(best.share_nd / 1000).toFixed(1)} GW.`;
     }
     const over = records.filter(r => r.halfhours_solar_over_nd > 0);
     setNote('duck-fact-over', over.length
