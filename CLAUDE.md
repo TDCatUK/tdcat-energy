@@ -8,6 +8,7 @@ Handover notes for any Claude session (local or cloud) working on this repo.
 - **Never test against live data.** Copy `grid_data.db`, `config.json` or `static/forecast.json` into a scratch directory and point code at the copy. Open the live DB read-only if you must look (`sqlite3 "file:grid_data.db?mode=ro"`).
 - **Commit and push after every change.** Remote: `git@github.com:TDCatUK/tdcat-energy.git`, branch `main`. No pulling is needed because every machine uses the same folder. Never force-push or rewrite history without asking.
 - **Add a dated entry to the "Changes" section of `README.md` for every change**, and keep this file current.
+- **User-visible changes also go on the public Changelog page** (`templates/changelog.html`, a hand-written plain-English summary grouped under a date heading). Internal-only changes (docs, refactors) don't need to.
 - Edits to `app.py` and `harvester.py` take effect on OTTO: the harvester picks them up on its next 5-minute run, but Flask needs a restart. The restart happens on OTTO, so tell the owner when one is needed.
 
 ## What it is
@@ -27,6 +28,7 @@ cron/launchd on OTTO (every 5 min)
    /             templates/index.html  + static/script.js  (polls every 2 min)
    /admin        templates/admin.html  (edits config.json via POST /api/config)
    /about        templates/about.html  (explains the metrics; keep it in step with any maths changes)
+   /changelog    templates/changelog.html  (public, plain-English list of changes)
    /api/data     latest row + last 288 rows (≈24 h) + today's Powerwall kWh totals
    /api/config   GET only (public): config.json merged over DEFAULT_CONFIG
    /admin/api/config  POST: validates and atomically replaces config.json (protected by Cloudflare Access on /admin/*)

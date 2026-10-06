@@ -20,7 +20,8 @@ const fuelInfoText = {
     "Pumped Storage": "Reservoirs that release water through turbines during high demand, and pump water back uphill when grid power is cheap.",
     "OCG": "Fast-starting but inefficient open-cycle gas turbines used strictly to cover sudden peaks in national demand.",
     "Other": "Generation Elexon doesn't put under a main fuel type, such as energy-from-waste and some smaller plants. Coal and oil are added here too; GB's last coal power station closed in September 2024.",
-    "Grid Batteries": "An unofficial estimate. Every 5 minutes this adds up the current level of each battery unit in the Balancing Mechanism: its own Physical Notification, or the latest NESO instruction (Bid-Offer Acceptance) where there is one. Batteries outside the Balancing Mechanism aren't included, and these are planned rather than metered levels, so treat it as an indication. Above zero = discharging into the grid, below zero = charging. See the About page for details."
+    "Grid Batteries": "An unofficial estimate. Every 5 minutes this adds up the current level of each battery unit in the Balancing Mechanism: its own Physical Notification, or the latest NESO instruction (Bid-Offer Acceptance) where there is one. Batteries outside the Balancing Mechanism aren't included, and these are planned rather than metered levels, so treat it as an indication. Above zero = discharging into the grid, below zero = charging. See the About page for details.",
+    "Batteries (est.)": "Unofficial estimate of grid-scale batteries discharging into the grid right now (charging is demand, so it isn't shown here). Every 5 minutes this adds up the current level of each battery unit in the Balancing Mechanism: its own Physical Notification, or the latest NESO instruction (Bid-Offer Acceptance) where there is one. Batteries outside the Balancing Mechanism aren't included, and these are planned rather than metered levels, so treat it as an indication. Above zero = discharging into the grid, below zero = charging. See the About page for details."
 };
 
 const interconnectorCaps = {
@@ -45,7 +46,7 @@ function getValidIcon(val) {
     return LEGACY_ICONS[val] || 'fa-solid fa-' + val;
 }
 
-const sortOrder = ["Wind", "LV Wind", "Solar", "Hydro", "Biomass", "Nuclear", "Imports", "Other", "OCG", "CCGT", "Pumped Storage"];
+const sortOrder = ["Wind", "LV Wind", "Solar", "Hydro", "Biomass", "Nuclear", "Imports", "Other", "OCG", "CCGT", "Pumped Storage", "Batteries (est.)"];
 
 let genChartInstance, flowChartInstance, historyChartInstance, carbonChartInstance, fuelDetailChartInstance, fourDemandChartInstance;
 let sparkDemand, sparkGen, sparkFlow, sparkFreq, sparkPrice, sparkMiPrice, sparkNiv, sparkCarbon, sparkPwLoad, sparkPwSolar, sparkPwBatt, sparkPwGrid, sparkOctImp, sparkOctExp;
@@ -432,19 +433,22 @@ function updateFuelDetailChart() {
 let showBatteryInMix = true;
 try { showBatteryInMix = localStorage.getItem('showBatteryInMix') !== 'false'; } catch (e) {}
 
-function toggleBatteryInMix() {
-    showBatteryInMix = !showBatteryInMix;
-    try { localStorage.setItem('showBatteryInMix', showBatteryInMix); } catch (e) {}
-    renderHistoryChart();
+function setBatteryInMix(on) {
+    showBatteryInMix = on;
+    try { localStorage.setItem('showBatteryInMix', on); } catch (e) {}
+    if (currentGridData && activeConfig) renderDashboardData(currentGridData);
+}
+
+function styleBatteryPills() {
+    const active = "px-4 py-1 rounded-full bg-ui-grey text-white font-semibold shadow-sm transition-all";
+    const idle = "px-4 py-1 rounded-full text-ui-light hover:text-white transition-all";
+    document.querySelectorAll('.batt-pill-on').forEach(b => b.className = 'batt-pill-on ' + (showBatteryInMix ? active : idle));
+    document.querySelectorAll('.batt-pill-off').forEach(b => b.className = 'batt-pill-off ' + (showBatteryInMix ? idle : active));
 }
 
 function renderHistoryChart() {
     if(!cachedHistoryData.length || !activeConfig) return;
-    const battBtn = document.getElementById('btn-batt-mix');
-    if (battBtn) {
-        battBtn.className = "px-3 py-1 rounded-lg border text-sm font-semibold transition " + (showBatteryInMix ? "bg-ui-grey text-white border-ui-grey" : "text-ui-light border-ui-grey hover:text-white");
-        battBtn.innerText = (showBatteryInMix ? '✓ ' : '') + 'Batteries (est.)';
-    }
+    styleBatteryPills();
     const timeLabels = cachedHistoryData.map(h => new Date(h.time).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}));
     const apiFuels = ["nuclear", "ccgt", "ocg", "other", "imports", "biomass", "pumped_storage", ...(showBatteryInMix ? ["battery"] : []), "hydro", "solar", "lv_wind", "wind"];
     const historyColours = { "wind": activeConfig.fuels.wind, "lv_wind": activeConfig.fuels.lv_wind || '#5FB035', "solar": activeConfig.fuels.solar, "hydro": activeConfig.fuels.hydro, "pumped_storage": activeConfig.fuels.pumped_storage, "biomass": activeConfig.fuels.biomass, "nuclear": activeConfig.fuels.nuclear, "imports": activeConfig.fuels.imports, "other": activeConfig.fuels.other, "ocg": activeConfig.fuels.ocg, "ccgt": activeConfig.fuels.ccgt };
@@ -557,6 +561,16 @@ function setFlowSpeed(idPrefix, gwValue) {
     anim1.setAttribute('dur', dur + 's');
     anim2.setAttribute('dur', dur + 's');
     anim2.setAttribute('begin', (dur / 2) + 's');
+}
+
+// Run a flow line's dots backwards (end to start) or forwards
+function setFlowDirection(idPrefix, reverse) {
+    [1, 2].forEach(n => {
+        const anim = document.getElementById(`anim-${idPrefix}-${n}`);
+        if (!anim) return;
+        if (reverse) { anim.setAttribute('keyPoints', '1;0'); anim.setAttribute('keyTimes', '0;1'); anim.setAttribute('calcMode', 'linear'); }
+        else { anim.removeAttribute('keyPoints'); anim.removeAttribute('keyTimes'); anim.removeAttribute('calcMode'); }
+    });
 }
 
 function updateDashboard() {
@@ -692,12 +706,15 @@ function renderDashboardData(data) {
     const flowInd = document.getElementById('flow-indicator');
     if (data.net_flow_mw > 0) { flowInd.innerText = "↓"; flowInd.className = "w-10 h-10 flex-shrink-0 flex items-center justify-center bg-brand-orange text-ui-darkest rounded-full font-black text-xl z-10 pointer-events-auto"; } else { flowInd.innerText = "↑"; flowInd.className = "w-10 h-10 flex-shrink-0 flex items-center justify-center bg-brand-cyan text-ui-darkest rounded-full font-black text-xl z-10 pointer-events-auto"; }
 
-    currentTotalGW = formatGW(data.total_generation_mw); 
+    const genMix = { ...data.generation_mix };
+    if (showBatteryInMix && data.battery && data.battery.discharge_mw != null) genMix['Batteries (est.)'] = data.battery.discharge_mw;
+    currentTotalGW = formatGW(Object.values(genMix).reduce((a, b) => a + b, 0));
     
     const fuelColours = { "CCGT": activeConfig.fuels.ccgt, "OCG": activeConfig.fuels.ocg, "Wind": activeConfig.fuels.wind, "LV Wind": activeConfig.fuels.lv_wind || '#5FB035', "Nuclear": activeConfig.fuels.nuclear, "Biomass": activeConfig.fuels.biomass, "Hydro": activeConfig.fuels.hydro, "Pumped Storage": activeConfig.fuels.pumped_storage, "Solar": activeConfig.fuels.solar, "Other": activeConfig.fuels.other };
-    const rawGenLabels = Object.keys(data.generation_mix);
+    fuelColours["Batteries (est.)"] = activeConfig.fuels.battery || '#A78BFA';
+    const rawGenLabels = Object.keys(genMix);
     const sortedGenLabels = rawGenLabels.sort((a, b) => { let idxA = sortOrder.indexOf(a); let idxB = sortOrder.indexOf(b); if(idxA === -1) idxA = 99; if(idxB === -1) idxB = 99; return idxA - idxB; });
-    const genValuesGW = sortedGenLabels.map(label => data.generation_mix[label] / 1000);
+    const genValuesGW = sortedGenLabels.map(label => genMix[label] / 1000);
     const genBackgrounds = sortedGenLabels.map(fuel => fuelColours[fuel] || '#3F3F46');
 
     const legendContainer = document.getElementById('custom-legend'); legendContainer.innerHTML = '';
@@ -812,9 +829,16 @@ function renderDashboardData(data) {
     const val_wind = (data.generation_mix['Wind'] || 0) / 1000;
     const val_lv_wind = (data.generation_mix['LV Wind'] || 0) / 1000;
     const val_sol = (data.generation_mix['Solar'] || 0) / 1000;
-    const val_hv = (data.total_generation_mw / 1000) - val_wind - val_lv_wind - val_sol;
-    const val_tot = (data.total_generation_mw + flow_imp) / 1000;
-    const val_psh = (data.breakdown.psh_pumping_mw || 0) / 1000;
+    // Storage node: pumped storage plus (when switched on) the battery estimate, as one net flow.
+    // Above zero it's releasing energy into the grid, below zero it's storing it.
+    const psh_gen = Math.max(0, data.generation_mix['Pumped Storage'] || 0) / 1000;
+    const psh_pump = (data.breakdown.psh_pumping_mw || 0) / 1000;
+    const batt = showBatteryInMix && data.battery && data.battery.discharge_mw != null ? data.battery : null;
+    const batt_out = batt ? batt.discharge_mw / 1000 : 0, batt_in = batt ? batt.charge_mw / 1000 : 0;
+    const val_stor_net = (psh_gen + batt_out) - (psh_pump + batt_in);
+    const val_hv = (data.total_generation_mw / 1000) - val_wind - val_lv_wind - val_sol - psh_gen;
+    const val_tot = val_imp + Math.max(0, val_hv) + val_wind + val_lv_wind + val_sol + Math.max(0, val_stor_net);
+    const val_psh = Math.abs(val_stor_net);
     const val_dem = nNet;
 
     document.getElementById('svg-val-imp').textContent = val_imp.toFixed(2) + ' GW';
@@ -857,9 +881,6 @@ function renderDashboardData(data) {
         const nuclear = (mix['Nuclear'] || 0) / 1000;
         const biomass = (mix['Biomass'] || 0) / 1000;
         const hydro = (mix['Hydro'] || 0) / 1000;
-        
-        // Only show pumped storage here if it is actively generating (> 0)
-        const pshGen = Math.max(0, (mix['Pumped Storage'] || 0) / 1000);
         const other = (mix['Other'] || 0) / 1000;
 
         const tipHtml = `
@@ -879,10 +900,6 @@ function renderDashboardData(data) {
             <div class="flex justify-between gap-6 mb-1">
                 <span class="font-medium" style="color: ${activeConfig.fuels.hydro}">Hydro:</span> 
                 <span class="font-mono font-bold">${hydro.toFixed(2)} GW</span>
-            </div>
-            <div class="flex justify-between gap-6 mb-1">
-                <span class="font-medium" style="color: ${activeConfig.fuels.pumped_storage}">Pumped Storage:</span> 
-                <span class="font-mono font-bold">${pshGen.toFixed(2)} GW</span>
             </div>
             <div class="flex justify-between gap-6">
                 <span class="font-medium" style="color: ${activeConfig.fuels.other}">Other:</span> 
@@ -905,6 +922,23 @@ function renderDashboardData(data) {
     document.getElementById('svg-val-sol').textContent = val_sol.toFixed(2) + ' GW';
     document.getElementById('svg-val-tot').textContent = val_tot.toFixed(2) + ' GW';
     document.getElementById('svg-val-psh').textContent = val_psh.toFixed(2) + ' GW';
+    const dirEl = document.getElementById('svg-dir-psh');
+    if (dirEl) dirEl.textContent = val_stor_net > 0.005 ? 'discharging' : (val_stor_net < -0.005 ? 'charging' : '');
+    setFlowDirection('psh', val_stor_net > 0);  // discharging: dots run from Storage into Total Output
+
+    const pshGroup = document.getElementById('psh-node-group');
+    if (pshGroup) {
+        const row = (colour, name, gw) => `<div class="flex justify-between gap-6 mb-1"><span class="font-medium" style="color: ${colour}">${name}:</span><span class="font-mono font-bold">${gw}</span></div>`;
+        const battColour = activeConfig.fuels.battery || '#A78BFA';
+        const tipHtml = `<div class="font-bold mb-1.5 border-b border-ui-grey/50 pb-1.5 text-[13px]">Storage (net): ${val_stor_net >= 0 ? 'discharging' : 'charging'} ${val_psh.toFixed(2)} GW</div>` +
+            row(activeConfig.fuels.pumped_storage, 'Pumped storage generating', psh_gen.toFixed(2) + ' GW') +
+            row(activeConfig.fuels.pumped_storage, 'Pumped storage pumping', psh_pump.toFixed(2) + ' GW') +
+            (batt ? row(battColour, 'Batteries discharging (est.)', batt_out.toFixed(2) + ' GW') + row(battColour, 'Batteries charging (est.)', batt_in.toFixed(2) + ' GW')
+                  : row('#A1A1AA', 'Batteries (est.)', 'switched off'));
+        pshGroup.onmouseenter = (e) => showCustomTooltip(e, tipHtml);
+        pshGroup.onmousemove = moveCustomTooltip;
+        pshGroup.onmouseleave = hideCustomTooltip;
+    }
     document.getElementById('svg-val-dem').textContent = Math.max(0, val_dem).toFixed(2) + ' GW';
     document.getElementById('svg-val-exp').textContent = val_exp.toFixed(2) + ' GW';
 

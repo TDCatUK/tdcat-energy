@@ -129,6 +129,7 @@
                 </div>
                 <div class="h-4 w-px bg-ui-grey hidden sm:block"></div>
                 <a href="/about" class="text-xs md:text-sm font-semibold text-ui-light hover:text-white transition">About</a>
+                <a href="/changelog" class="text-xs md:text-sm font-semibold text-ui-light hover:text-white transition">Changelog</a>
                 <a href="/admin" class="text-xs md:text-sm font-semibold text-ui-light hover:text-white transition">Admin</a>
             </div>
         </div>
@@ -287,26 +288,17 @@
 
             <section id="price-expanded-chart" class="hidden mt-4"><div class="bg-ui-card p-6 rounded-2xl border border-ui-grey shadow-lg"><div class="flex justify-between items-center mb-4"><h3 class="text-xl font-bold text-white">24-Hour Price Comparison (£/MWh)</h3><button onclick="togglePriceCharts()" class="text-ui-grey hover:text-white text-2xl">&times;</button></div><div class="h-[300px] w-full relative"><canvas id="chartPriceDetail"></canvas></div></div></section>
 
-            <section id="battery-panel" class="bg-ui-card p-6 rounded-2xl border border-ui-grey shadow-lg">
-                <div class="flex flex-wrap justify-between items-start gap-4 mb-4">
-                    <div>
-                        <div class="flex items-center gap-2 flex-wrap">
-                            <h3 class="text-xl font-bold text-white">Grid Batteries</h3>
-                            <span class="text-[10px] uppercase tracking-widest px-2 py-0.5 rounded border border-brand-orange/60 text-brand-orange font-semibold">Unofficial estimate</span>
-                            <button onclick="openInfoModal('Grid Batteries')" class="w-5 h-5 rounded-full bg-ui-grey/50 text-white flex items-center justify-center text-[10px] font-bold hover:bg-brand-cyan hover:text-ui-darkest transition cursor-pointer">i</button>
+            <section class="bg-ui-card p-6 rounded-2xl border border-ui-grey shadow-lg mt-4">
+                <div class="flex flex-wrap justify-between items-center gap-3 mb-6">
+                    <h3 class="text-xl font-bold text-white">Generation by Fuel Type</h3>
+                    <div class="flex items-center gap-2" title="Include the unofficial grid battery estimate in the generation charts and energy flow">
+                        <span class="text-xs font-semibold text-ui-light uppercase tracking-wider">Batteries (est.)</span>
+                        <div class="bg-[#18181B] rounded-full p-1 border border-ui-grey/50 flex text-sm shadow-inner">
+                            <button onclick="setBatteryInMix(true)" class="batt-pill-on px-4 py-1 rounded-full bg-ui-grey text-white font-semibold shadow-sm transition-all">On</button>
+                            <button onclick="setBatteryInMix(false)" class="batt-pill-off px-4 py-1 rounded-full text-ui-light hover:text-white transition-all">Off</button>
                         </div>
-                        <p class="text-xs text-[#A1A1AA] mt-1">Balancing Mechanism battery units: their notified plans, updated with NESO instructions.</p>
-                    </div>
-                    <div class="text-right">
-                        <p class="text-4xl xl:text-5xl font-extrabold text-white"><span id="bess-net">---</span> <span class="text-base font-semibold text-ui-light">GW</span></p>
-                        <p id="bess-label" class="text-xs text-[#A1A1AA] font-medium mt-1">---</p>
                     </div>
                 </div>
-                <div class="h-[220px] w-full relative"><canvas id="chartBattery"></canvas></div>
-            </section>
-
-            <section class="bg-ui-card p-6 rounded-2xl border border-ui-grey shadow-lg mt-4">
-                <h3 class="text-xl font-bold text-white mb-6">Generation by Fuel Type</h3>
                 
                 <div class="grid grid-cols-1 lg:grid-cols-4 gap-6 items-center">
                     
@@ -448,13 +440,14 @@
                                 <text y="26" class="flow-val" id="svg-val-tot" style="font-size: 20px;">-- GW</text>
                             </g>
 
-                            <g transform="translate(870, 70)">
+                            <g id="psh-node-group" transform="translate(870, 70)" class="cursor-pointer transition-opacity hover:opacity-80">
                                 <circle r="46" class="node-circle" stroke="var(--color-stor, #30C5D5)" />
                                 <foreignObject width="24" height="24" x="-12" y="-28" style="color: var(--color-stor, #30C5D5);">
                                     <div xmlns="http://www.w3.org/1999/xhtml" class="flex items-center justify-center w-full h-full"><i id="icon-psh" class="fa-solid fa-battery-half text-[18px]"></i></div>
                                 </foreignObject>
                                 <text y="5" class="flow-title">Storage</text>
                                 <text y="22" class="flow-val" id="svg-val-psh">-- GW</text>
+                                <text y="35" class="flow-text" id="svg-dir-psh" style="font-size: 9px; fill: #A1A1AA;"></text>
                             </g>
 
                             <g transform="translate(870, 200)">
@@ -483,7 +476,13 @@
                 <div class="flex justify-between items-end mb-6">
                     <h3 class="text-xl font-bold text-white">24-Hour Generation Mix</h3>
                     <div class="flex flex-wrap items-center justify-end gap-3">
-                    <button id="btn-batt-mix" onclick="toggleBatteryInMix()" title="Add the unofficial grid battery estimate (discharging) to the chart" class="px-3 py-1 rounded-lg border text-sm font-semibold transition">Batteries (est.)</button>
+                    <div class="flex items-center gap-2" title="Include the unofficial grid battery estimate in the generation charts and energy flow">
+                        <span class="text-xs font-semibold text-ui-light uppercase tracking-wider">Batteries (est.)</span>
+                        <div class="bg-[#18181B] rounded-full p-1 border border-ui-grey/50 flex text-sm shadow-inner">
+                            <button onclick="setBatteryInMix(true)" class="batt-pill-on px-4 py-1 rounded-full bg-ui-grey text-white font-semibold shadow-sm transition-all">On</button>
+                            <button onclick="setBatteryInMix(false)" class="batt-pill-off px-4 py-1 rounded-full text-ui-light hover:text-white transition-all">Off</button>
+                        </div>
+                    </div>
                     <div class="bg-ui-darkest rounded-lg p-1 border border-ui-grey flex text-sm">
                         <button id="btn-gw" onclick="setHistoryMode('GW')" class="px-4 py-1 rounded bg-ui-grey text-white font-semibold transition">GW</button>
                         <button id="btn-perc" onclick="setHistoryMode('%')" class="px-4 py-1 rounded text-ui-light hover:text-white transition">%</button>
@@ -491,6 +490,24 @@
                     </div>
                 </div>
                 <div class="h-[450px] w-full relative"><canvas id="historyChart"></canvas></div>
+            </section>
+
+            <section id="battery-panel" class="bg-ui-card p-6 rounded-2xl border border-ui-grey shadow-lg">
+                <div class="flex flex-wrap justify-between items-start gap-4 mb-4">
+                    <div>
+                        <div class="flex items-center gap-2 flex-wrap">
+                            <h3 class="text-xl font-bold text-white">Grid Batteries</h3>
+                            <span class="text-[10px] uppercase tracking-widest px-2 py-0.5 rounded border border-brand-orange/60 text-brand-orange font-semibold">Unofficial estimate</span>
+                            <button onclick="openInfoModal('Grid Batteries')" class="w-5 h-5 rounded-full bg-ui-grey/50 text-white flex items-center justify-center text-[10px] font-bold hover:bg-brand-cyan hover:text-ui-darkest transition cursor-pointer">i</button>
+                        </div>
+                        <p class="text-xs text-[#A1A1AA] mt-1">Balancing Mechanism battery units: their notified plans, updated with NESO instructions.</p>
+                    </div>
+                    <div class="text-right">
+                        <p class="text-4xl xl:text-5xl font-extrabold text-white"><span id="bess-net">---</span> <span class="text-base font-semibold text-ui-light">GW</span></p>
+                        <p id="bess-label" class="text-xs text-[#A1A1AA] font-medium mt-1">---</p>
+                    </div>
+                </div>
+                <div class="h-[220px] w-full relative"><canvas id="chartBattery"></canvas></div>
             </section>
 
             <section class="bg-ui-card p-6 rounded-2xl border border-ui-grey shadow-lg">

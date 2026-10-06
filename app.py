@@ -87,6 +87,9 @@ def admin(): return render_template('admin.html')
 @app.route('/about')
 def about(): return render_template('about.html')
 
+@app.route('/changelog')
+def changelog(): return render_template('changelog.html')
+
 @app.route('/api/config')
 def get_config():
     return jsonify(load_config())
