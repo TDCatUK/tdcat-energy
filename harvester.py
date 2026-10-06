@@ -10,6 +10,7 @@ from datetime import date, datetime, timedelta, timezone, time
 from zoneinfo import ZoneInfo
 import pypowerwall
 from dotenv import load_dotenv
+from sources import SOURCES, parse_utc, source_state
 
 load_dotenv()
 
@@ -742,6 +743,104 @@ def fetch_forecasts(now_utc, timeout=20):
     return out
 
 
+# === ALERTS (ntfy push notifications) ===
+# Settings in .env: NTFY_TOPIC (required to send anything), and optionally NTFY_TOKEN (for a reserved topic),
+# NTFY_SERVER (default https://ntfy.sh) and ALERT_DAILY_HOUR (UK hour for the daily all-clear, default 8).
+NTFY_SERVER = (os.getenv("NTFY_SERVER") or "https://ntfy.sh").rstrip('/')
+NTFY_TOPIC = os.getenv("NTFY_TOPIC")
+NTFY_TOKEN = os.getenv("NTFY_TOKEN")
+ALERT_DAILY_HOUR = int(os.getenv("ALERT_DAILY_HOUR") or 8)
+STATUS_URL = f"https://{HOSTNAME}/status"
+# The state each source was last reported as ('ok' or 'fail'), and since when it last worked if failing
+ALERT_TABLE = "CREATE TABLE IF NOT EXISTS alert_state (source TEXT PRIMARY KEY, state TEXT, since TEXT)"
+
+def notify(title, message, priority=3, tags=()):
+    """Push a notification to the ntfy topic. True if ntfy accepted it. Titles are sent as headers, so keep them plain text."""
+    if not NTFY_TOPIC: return False
+    headers = {'Title': title, 'Priority': str(priority), 'Click': STATUS_URL}
+    if tags: headers['Tags'] = ','.join(tags)
+    if NTFY_TOKEN: headers['Authorization'] = f"Bearer {NTFY_TOKEN}"
+    try:
+        requests.post(f"{NTFY_SERVER}/{NTFY_TOPIC}", data=message.encode('utf-8'), headers=headers, timeout=10).raise_for_status()
+        return True
+    except Exception as e:
+        print(f"ntfy error: {short_error(e)}")
+        return False
+
+def duration_text(seconds):
+    mins = max(1, round(seconds / 60))
+    if mins < 60: return f"{mins} min"
+    if mins < 48 * 60: return f"{mins // 60} h {mins % 60:02d} min"
+    return f"{round(mins / 1440)} days"
+
+def check_alerts(now_utc, online=True):
+    """After each run: one notification listing sources that have just gone red, one when they recover, and a daily all-clear.
+
+    Uses the same rules as the Status page (sources.py), so a source alerts when its dot turns red:
+    3 failures in a row, or nothing good for 12 of its intervals. Amber never alerts. If a send fails
+    it's retried next run. While the internet is down nothing can be sent, so newly failing sources are
+    recorded quietly and their recovery is reported once it's back.
+    """
+    if not NTFY_TOPIC: return
+    try:
+        conn = sqlite3.connect('grid_data.db')
+        conn.row_factory = sqlite3.Row
+        try:
+            conn.execute(ALERT_TABLE)
+            status = {r['source']: r for r in conn.execute('SELECT * FROM source_status')}
+            alerted = {r['source']: r for r in conn.execute('SELECT * FROM alert_state')}
+            names, states, failing, recovered = {}, {}, [], []
+            for _, sources in SOURCES:
+                for key, name, _, every in sources:
+                    state = source_state(status.get(key), every, now_utc)
+                    if state == 'unknown': continue
+                    names[key], states[key] = name, state
+                    before = alerted[key]['state'] if key in alerted else None
+                    if state == 'fail' and before != 'fail': failing.append(key)
+                    elif state == 'ok' and before == 'fail': recovered.append(key)  # amber after red isn't a recovery yet
+                    elif before is None: conn.execute("INSERT INTO alert_state VALUES (?, 'ok', NULL)", (key,))
+
+            def ago(key):
+                last_ok = status[key]['last_ok']
+                return f"last worked {duration_text((now_utc - parse_utc(last_ok)).total_seconds())} ago" if last_ok else "hasn't worked yet"
+            if failing:
+                lines = [f"{names[k]}: {status[k]['last_error'] if status[k]['fails'] else 'no new data'} ({ago(k)})" for k in failing]
+                title = f"{names[failing[0]]} is failing" if len(failing) == 1 else f"{len(failing)} data sources are failing"
+                if not online or notify(title, '\n'.join(lines), priority=4, tags=['rotating_light']):
+                    conn.executemany("INSERT OR REPLACE INTO alert_state VALUES (?, 'fail', ?)", [(k, status[k]['last_ok']) for k in failing])
+            if recovered and online:
+                def down_for(k):
+                    since = alerted[k]['since']
+                    return f"back after {duration_text((now_utc - parse_utc(since)).total_seconds())}" if since else "back"
+                title = f"{names[recovered[0]]} is working again" if len(recovered) == 1 else f"{len(recovered)} data sources are working again"
+                if notify(title, '\n'.join(f"{names[k]}: {down_for(k)}" for k in recovered), tags=['white_check_mark']):
+                    conn.executemany("INSERT OR REPLACE INTO alert_state VALUES (?, 'ok', NULL)", [(k,) for k in recovered])
+
+            # Daily all-clear, so silence means something's wrong (OTTO, the network or the harvester itself)
+            uk_now = now_utc.astimezone(LONDON)
+            last = conn.execute("SELECT fetched_at FROM fetch_log WHERE name = 'alert_daily'").fetchone()
+            if online and uk_now.hour >= ALERT_DAILY_HOUR and (not last or datetime.fromisoformat(last[0]).astimezone(LONDON).date() != uk_now.date()):
+                day_ago = (now_utc - timedelta(days=1)).strftime('%Y-%m-%dT%H:%M:%SZ')
+                runs, seconds = conn.execute("SELECT COUNT(*), AVG(seconds) FROM source_runs WHERE timestamp >= ?", (day_ago,)).fetchone()
+                blips = {}
+                for (failed,) in conn.execute("SELECT failed FROM source_runs WHERE timestamp >= ? AND failed != ''", (day_ago,)):
+                    for k in failed.split(','):
+                        blips[k] = blips.get(k, 0) + 1
+                problems = [k for k, s in states.items() if s != 'ok']
+                lines = [f"{runs} harvester runs in the last 24 hours, averaging {seconds or 0:.1f} s."]
+                lines += [f"{names[k]}: {'failing' if states[k] == 'fail' else 'needs a look'} ({status[k]['last_error'] or 'late'})" for k in problems]
+                brief = [f"{names.get(k, k)} ×{n}" for k, n in sorted(blips.items(), key=lambda kv: -kv[1]) if k not in problems]
+                lines.append(f"Brief failures that recovered: {', '.join(brief)}." if brief else "No failed fetches.")
+                title = f"Daily check: all {len(states)} sources OK" if not problems else f"Daily check: {len(problems)} of {len(states)} sources need a look"
+                if notify(title, '\n'.join(lines), priority=3 if not problems else 4, tags=['sunny'] if not problems else ['warning']):
+                    conn.execute("INSERT OR REPLACE INTO fetch_log VALUES ('alert_daily', ?)", (now_utc.isoformat(),))
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"Alert check error: {e}")
+
+
 LOG_FILE = 'harvester.log'
 LOG_KEEP_DAYS = 90
 
@@ -863,6 +962,7 @@ def fetch_and_store():
                 conn.commit()
                 conn.close()
                 print("-> Success! Local-Only row added.")
+                check_alerts(now_utc, online=False)
                 return # <-- EXITS THE SCRIPT HERE SO EXTERNAL APIS ARE SKIPPED
                 
             except Exception as e:
@@ -1243,6 +1343,7 @@ def fetch_and_store():
         conn.commit()
         conn.close()
         print(f"-> Success! Row added.")
+        check_alerts(now_utc)
 
     except Exception as e:
         print(f"-> Harvester Error: {e}")
