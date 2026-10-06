@@ -9,7 +9,8 @@ Handover notes for any Claude session (local or cloud) working on this repo.
 - **Commit and push after every change.** Remote: `git@github.com:TDCatUK/tdcat-energy.git`, branch `main`. No pulling is needed because every machine uses the same folder. Never force-push or rewrite history without asking.
 - **Add a dated entry to the "Changes" section of `README.md` for every change**, and keep this file current.
 - **User-visible changes also go on the public Changelog page** (`templates/changelog.html`): one compact card per date with "New" and "Fixed" columns, written in the first person by the owner ("I've added…"), short plain-English bullets. Leave out security details, internal/behind-the-scenes work and admin-only settings.
-- Edits to `app.py` and `harvester.py` take effect on OTTO: the harvester picks them up on its next 5-minute run, but Flask needs a restart. The restart happens on OTTO, so tell the owner when one is needed.
+- Edits to `app.py` and `harvester.py` take effect on OTTO: the harvester picks them up on its next 5-minute run, but the web app needs a restart (templates are cached too). The owner restarts it on OTTO with `app restart energy`, so tell them when one is needed.
+- On OTTO the web app runs under **gunicorn**, not `python app.py`: launchd job `com.tdcat.energy` (plist written by `/Users/tdcat/SCRIPTS/install_agents.sh`, outside this repo) runs `.venv/bin/gunicorn --bind 127.0.0.1:5000 --workers 1 --threads 4 --worker-class gthread --timeout 300 --max-requests 1000 --max-requests-jitter 50 app:app`, with stdout and stderr in `/Users/tdcat/SCRIPTS/logs/ENERGY.log` (`/Volumes/SCRIPTS/logs/ENERGY.log` from OSKAR). `--max-requests` means the worker is also replaced every ~1,000 requests, which empties in-memory caches. Log from `app.py` with `logging.getLogger('gunicorn.error')` so lines land in ENERGY.log in gunicorn's format. To test like production, run `python -m gunicorn` with the same flags in a scratch copy (the venv's `gunicorn` script has OTTO's path in its shebang).
 
 ## What it is
 
@@ -24,7 +25,7 @@ cron/launchd on OTTO (every 5 min)
         ├──► INSERT one row into grid_data.db : energy_snapshots
         └──► overwrite static/forecast.json (raw Open-Meteo payload)
 
- app.py (Flask :5000)
+ app.py (Flask app, served by gunicorn on 127.0.0.1:5000)
    /             templates/index.html  + static/script.js  (polls every 2 min)
    /admin        templates/admin.html  (edits config.json via POST /api/config)
    /about        templates/about.html  (explains the metrics; keep it in step with any maths changes)
@@ -113,7 +114,7 @@ Every fetch in the harvester calls `report(source, ok, error, data_time)`; `save
 
 ## History page
 
-`/api/history?range=7d|30d|1y` serves hourly buckets (7d) or UK-day buckets (30d, 1y; for 1y `history.js` regroups the days into Monday-to-Sunday weeks with `toWeekly()`, so the server's summary stays daily; days are built from UTC hours, which works because UK offsets are whole hours). `refresh_history()` folds every `energy_snapshots` row into `history_hours` (in memory, keyed by UTC hour start) with `fold_row()`, which runs `summarise_row()` so the maths matches the live charts. After a Flask restart the first request rebuilds everything (~1 s for 48k rows); later requests only refold from the newest hour. `refresh_frequency()` does the same from `frequency_readings` via SQL `GROUP BY t / 3600`, and rebuilds if the limits change or older readings appear (the harvester back-fills backwards). Stored zeros from failed fetches are skipped (carbon 0, MIDP 0, Octopus import and export both 0, Powerwall all 0), and rows over `MAX_PLAUSIBLE_GEN_MW` (65 GW) are ignored. Powerwall kWh per bucket = sum over its hours of each hour's average power × 1 h. A lock guards the shared caches (Flask's server is threaded).
+`/api/history?range=7d|30d|1y` serves hourly buckets (7d) or UK-day buckets (30d, 1y; for 1y `history.js` regroups the days into Monday-to-Sunday weeks with `toWeekly()`, so the server's summary stays daily; days are built from UTC hours, which works because UK offsets are whole hours). `refresh_history()` folds every `energy_snapshots` row into `history_hours` (in memory, keyed by UTC hour start) with `fold_row()`, which runs `summarise_row()` so the maths matches the live charts. After a Flask restart the first request rebuilds everything (~1 s for 48k rows); later requests only refold from the newest hour. `refresh_frequency()` does the same from `frequency_readings` via SQL `GROUP BY t / 3600`, and rebuilds if the limits change or older readings appear (the harvester back-fills backwards). Stored zeros from failed fetches are skipped (carbon 0, MIDP 0, Octopus import and export both 0, Powerwall all 0), and rows over `MAX_PLAUSIBLE_GEN_MW` (65 GW) are ignored. Powerwall kWh per bucket = sum over its hours of each hour's average power × 1 h. A lock guards the shared caches (gunicorn runs 4 threads). Each new worker builds the caches in a background thread at import (`warm_history_cache()`), logging "History cache ready in Xs" to ENERGY.log; `/api/status` reports it under `app` and the Status page shows it.
 
 ## Push alerts (ntfy)
 

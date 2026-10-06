@@ -99,10 +99,13 @@
                 : d.counts.fail ? `${d.counts.fail} of ${total} sources ${d.counts.fail === 1 ? 'is' : 'are'} failing` + (d.counts.warn ? `, ${d.counts.warn} ${d.counts.warn === 1 ? 'needs' : 'need'} a look` : '')
                 : d.counts.warn ? `${d.counts.warn} of ${total} sources ${d.counts.warn === 1 ? 'needs' : 'need'} a look`
                 : `All ${total} sources are working`;
-            document.getElementById('overall-note').innerText = h.last_run
+            const a = d.app;
+            document.getElementById('overall-note').innerText = (h.last_run
                 ? `Last run ${ago(h.last_run)}${h.seconds != null ? `, took ${h.seconds.toFixed(1)} s` : ''}. ${h.runs_24h} runs in the last 24 hours` +
                   (h.avg_seconds_24h != null ? `, averaging ${h.avg_seconds_24h.toFixed(1)} s.` : '.')
-                : '';
+                : '') + (!a ? '' : ` Web server started ${dataTime(a.started)}` +
+                  (a.history_error ? `; getting the History page ready failed (${a.history_error}).`
+                   : a.history_ready_s != null ? `; History page ready ${a.history_ready_s.toFixed(1)} s later.` : '; History page still getting ready.'));
 
             const firstHour = parse(d.first_hour);
             document.getElementById('groups').innerHTML = d.groups.map(g => `

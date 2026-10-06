@@ -1,6 +1,8 @@
 import os
 import json
+import logging
 import threading
+import time
 from flask import Flask, render_template, jsonify, request, send_from_directory
 import sqlite3
 from datetime import date, datetime, timedelta, timezone
@@ -371,6 +373,7 @@ def status():
         "now": now.strftime('%Y-%m-%dT%H:%M:%SZ'),
         "overall": overall,
         "counts": {s: states.count(s) for s in ('ok', 'warn', 'fail', 'unknown')},
+        "app": app_state,
         "harvester": {
             "last_run": last_time, "late": harvester_late,
             "seconds": last_run['seconds'] if last_run else None,
@@ -741,6 +744,32 @@ def get_data():
         "carbon_history": carbon_history
     }
     return jsonify(response_data)
+
+# === STARTUP: build the History page's cache straight away ===
+# On OTTO the app runs under gunicorn (launchd job com.tdcat.energy), which logs to SCRIPTS/logs/ENERGY.log.
+# Each new worker (a restart, or gunicorn's routine recycle after about 1,000 requests) starts with an empty
+# cache, so it's built in the background now rather than making the first visitor to /history wait.
+log = logging.getLogger('gunicorn.error')  # writes to ENERGY.log in gunicorn's format
+app_state = {"started": datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'), "history_ready_s": None, "history_error": None}
+
+def warm_history_cache():
+    begun = time.time()
+    try:
+        limits = load_config()['frequency']
+        with history_lock:
+            conn = get_db_connection()
+            try:
+                refresh_history(conn)
+                refresh_frequency(conn, float(limits['thresh_low']), float(limits['thresh_high']))
+            finally:
+                conn.close()
+        app_state["history_ready_s"] = round(time.time() - begun, 1)
+        log.info(f"History cache ready in {app_state['history_ready_s']}s: {len(history_hours):,} hours of snapshots, {len(freq_hours):,} hours of frequency readings")
+    except Exception as e:
+        app_state["history_error"] = str(e)[:200]
+        log.error(f"History cache warm-up failed: {e}")
+
+threading.Thread(target=warm_history_cache, name='warm-history-cache', daemon=True).start()
 
 if __name__ == '__main__': 
     app.run(host='0.0.0.0', port=5000, debug=False)
