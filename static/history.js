@@ -220,8 +220,13 @@ function drawPrice() {
         options: {
             plugins: {
                 legend: { labels: { color: '#D4D4D8', boxWidth: 12, filter: item => item.datasetIndex >= 2 } },
-                tooltip: { callbacks: { title: titleCallback, label: ctx => ctx.raw == null ? null
-                    : ctx.dataset.yAxisID === 'pence' ? `Agile import: ${ctx.raw.toFixed(1)}p/kWh` : `${ctx.dataset.label}: £${ctx.raw.toFixed(2)}/MWh` } }
+                // The highest/lowest lines only draw the shading; their values go on the average's line
+                tooltip: { filter: item => item.datasetIndex >= 2, callbacks: { title: titleCallback, label: ctx => {
+                    if (ctx.raw == null) return null;
+                    if (ctx.dataset.yAxisID === 'pence') return `Agile import: ${ctx.raw.toFixed(1)}p/kWh`;
+                    const lo = hist.mip_min[ctx.dataIndex], hi = hist.mip_max[ctx.dataIndex];
+                    return `Market index: £${ctx.raw.toFixed(2)}/MWh` + (lo != null && hi != null && hi > lo ? ` (range £${lo.toFixed(2)}–${hi.toFixed(2)})` : '');
+                } } }
             },
             scales: {
                 x: xScale(),
