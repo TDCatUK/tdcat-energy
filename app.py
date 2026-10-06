@@ -61,8 +61,11 @@ def load_config():
     return config
 
 def save_config(config_data):
-    with open(CONFIG_FILE, 'w') as f:
+    # Write to a temporary file and swap it in, so a failed write can't leave a half-written config
+    tmp = CONFIG_FILE + '.tmp'
+    with open(tmp, 'w') as f:
         json.dump(config_data, f, indent=4)
+    os.replace(tmp, CONFIG_FILE)
 
 def get_db_connection():
     conn = sqlite3.connect('grid_data.db')
@@ -78,12 +81,19 @@ def admin(): return render_template('admin.html')
 @app.route('/about')
 def about(): return render_template('about.html')
 
-@app.route('/api/config', methods=['GET', 'POST'])
-def handle_config():
-    if request.method == 'POST':
-        save_config(request.json)
-        return jsonify({"status": "success"})
+@app.route('/api/config')
+def get_config():
     return jsonify(load_config())
+
+# Saving lives under /admin/ so the Cloudflare Access login that protects /admin/* covers it.
+# /api/config stays public and read-only because the dashboard needs it.
+@app.route('/admin/api/config', methods=['POST'])
+def update_config():
+    config_data = request.get_json(silent=True)
+    if not isinstance(config_data, dict) or not all(isinstance(v, dict) for v in config_data.values()):
+        return jsonify({"status": "error", "message": "Expected the config as a JSON object of sections"}), 400
+    save_config(config_data)
+    return jsonify({"status": "success"})
 
 LONDON = ZoneInfo('Europe/London')
 
@@ -120,6 +130,39 @@ def summarise_row(row):
         "solar_mw": gen.get('Solar', 0), "embedded_mw": embedded,
     }
 
+# Typical calorific value of NTS gas, used to turn gas flow into energy
+GAS_CV_MJ_PER_M3 = 39.5
+
+def get_gas(conn, gas_fired_mw):
+    """Latest National Gas figures plus 24 h of history, or None before the harvester's first gas reading."""
+    try:
+        rows = conn.execute('SELECT * FROM gas_snapshots ORDER BY timestamp DESC LIMIT 288').fetchall()
+    except sqlite3.OperationalError:
+        return None  # the harvester creates gas_snapshots on its first gas reading
+    if not rows: return None
+    latest = dict(rows[0])
+    demand = json.loads(latest['demand_json'] or '{}')
+    # mcm/d of gas -> GW of fuel energy burned
+    power_thermal_gw = demand.get('Power stations', 0) * GAS_CV_MJ_PER_M3 * 1000 / 86400
+    capacity = lambda stock, space: (stock + space) if stock is not None and space is not None else None
+    return {
+        "updated": latest['timestamp'],
+        "flows_time": latest['flows_time'],
+        "linepack_mcm": latest['linepack_mcm'],
+        "supply_mcmd": latest['supply_mcmd'],
+        "demand_mcmd": latest['demand_mcmd'],
+        "supply": json.loads(latest['supply_json'] or '{}'),
+        "demand": demand,
+        "stock_gas_day": latest['stock_gas_day'],
+        "storage_stock_gwh": latest['storage_stock_gwh'],
+        "storage_capacity_gwh": capacity(latest['storage_stock_gwh'], latest['storage_space_gwh']),
+        "lng_stock_gwh": latest['lng_stock_gwh'],
+        "lng_capacity_gwh": capacity(latest['lng_stock_gwh'], latest['lng_space_gwh']),
+        "power_thermal_gw": power_thermal_gw,
+        "power_electric_gw": gas_fired_mw / 1000,
+        "history": [{"time": r['timestamp'], "linepack_mcm": r['linepack_mcm'], "supply_mcmd": r['supply_mcmd'], "demand_mcmd": r['demand_mcmd']} for r in reversed(rows)]
+    }
+
 @app.route('/api/data')
 def get_data():
     conn = get_db_connection()
@@ -129,6 +172,8 @@ def get_data():
     uk_midnight = datetime.now(LONDON).replace(hour=0, minute=0, second=0, microsecond=0)
     day_start = uk_midnight.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
     today_rows = conn.execute('SELECT timestamp, pw_solar_w, pw_home_w, pw_battery_w, pw_grid_w FROM energy_snapshots WHERE timestamp >= ? ORDER BY timestamp ASC', (day_start,)).fetchall()
+    latest_mix = json.loads(history_rows[0]['generation_mix'] or '{}') if history_rows else {}
+    gas = get_gas(conn, sum(max(0, latest_mix.get(k, 0) or 0) for k in ("Combined Cycle Gas (CCGT)", "Open Cycle Gas")))
 
     conn.close()
 
@@ -288,6 +333,7 @@ def get_data():
             "requests": latest.get('cf_requests_24h', 0),
             "bytes": latest.get('cf_bytes_24h', 0)
         },
+        "gas": gas,
         "history": history_payload,
         "carbon_history": carbon_history
     }

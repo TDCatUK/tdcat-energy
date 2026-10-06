@@ -1,3 +1,5 @@
+import csv
+import io
 import os
 import re
 import sys
@@ -306,6 +308,97 @@ def fetch_battery_flow(now_utc, timeout=20):
     except Exception as e:
         print(f"Battery estimate error: {e}")
         return None, None
+
+
+# === NATIONAL GAS (GB gas transmission system) ===
+NATIONAL_GAS_API = "https://data.nationalgas.com/api"
+GAS_STORAGE_SITES = {'ALDBROUGH', 'HILLTOP', 'HOLE HOUSE FARM', 'HOLFORD', 'HORNSEA', 'STUBLACH', 'EASINGTON ROUGH ST'}
+GAS_DEMAND_NAMES = {
+    'LDZ Offtake Flow': 'Homes & businesses',
+    'Power Station Demand Flow': 'Power stations',
+    'Industrial Demand Flow': 'Industry',
+    'Interconnector Export Demand Flow': 'Exports',
+    'Storage Demand Flow': 'Storage injection',
+}
+# Daily stock levels (kWh): storage stock, storage space left, LNG stock, LNG space left
+GAS_DAILY_ITEMS = {'PUBOBJ330': 'storage_stock', 'PUBOBJ333': 'storage_space', 'PUBOBJ336': 'lng_stock', 'PUBOBJ339': 'lng_space'}
+
+GAS_TABLE = """CREATE TABLE IF NOT EXISTS gas_snapshots (
+    timestamp TEXT PRIMARY KEY,
+    flows_time TEXT,
+    linepack_mcm REAL,
+    supply_mcmd REAL,
+    demand_mcmd REAL,
+    supply_json TEXT,
+    demand_json TEXT,
+    stock_gas_day TEXT,
+    storage_stock_gwh REAL,
+    storage_space_gwh REAL,
+    lng_stock_gwh REAL,
+    lng_space_gwh REAL
+)"""
+
+def fetch_gas_flows(timeout=20):
+    """Latest NTS gas flows (2-minute data, published every 12 minutes). Rates in mcm/d, linepack in mcm.
+
+    Supply is grouped by where the gas comes from; 'North Sea' is whatever's left of total supply
+    after LNG, storage, the continental pipelines and Norway's Langeled pipeline.
+    """
+    data = requests.get(f"{NATIONAL_GAS_API}/latest-gas-flows", headers={'User-Agent': 'Mozilla/5.0'}, timeout=timeout).json()['data']
+    def latest(row):
+        times = [k for k in row if k[:2].isdigit() and ':' in k]
+        return (float(row[times[-1]] or 0), times[-1]) if times else (0.0, None)
+    def rows(section): return data.get(section, {}).get('data', [])
+    entry = {r['SYSTEM ENTRY NAME']: latest(r)[0] for r in rows('Supply from entry points')}
+    terminal = {r.get('SYSTEM ENTRY NAME') or r.get('TERMINAL NAME') or next(v for k, v in r.items() if isinstance(v, str) and k != 'qualityIndicator'): latest(r)[0] for r in rows('Supply from terminals')}
+    def named(section):
+        return {next(v for k, v in r.items() if isinstance(v, str) and k != 'qualityIndicator'): latest(r) for r in rows(section)}
+    total_supply, flows_time = next(iter(named('Total supply').values()))
+    total_demand, _ = next(iter(named('Total demand').values()))
+    linepack, _ = next(iter(named('Actual linepack').values()))
+
+    supply = {
+        'LNG': sum(v for k, v in terminal.items() if 'GRAIN' in k.upper() or 'MILFORD' in k.upper()),
+        'Storage': sum(v for k, v in entry.items() if k in GAS_STORAGE_SITES),
+        'Continent (BBL, IUK)': sum(v for k, v in terminal.items() if 'BACTON IP' in k.upper()),
+        'Norway (Langeled)': entry.get('EASINGTON LANGELED', 0),
+    }
+    supply = {'North Sea (UK & Norway)': max(0, total_supply - sum(supply.values())), **supply}
+    demand = {GAS_DEMAND_NAMES.get(k, k): v for k, (v, _) in named('Demand by category').items()}
+    return {'flows_time': flows_time, 'linepack_mcm': linepack, 'supply_mcmd': total_supply, 'demand_mcmd': total_demand,
+            'supply': supply, 'demand': demand}
+
+def fetch_gas_stocks(now_utc, timeout=20):
+    """Latest daily storage and LNG stock levels in GWh, with the gas day they're for."""
+    params = {'applicableFor': 'Y', 'dateType': 'GASDAY', 'latestFlag': 'Y', 'type': 'CSV', 'ids': ','.join(GAS_DAILY_ITEMS),
+              'dateFrom': (now_utc - timedelta(days=4)).strftime('%Y-%m-%d'), 'dateTo': now_utc.strftime('%Y-%m-%d')}
+    res = requests.get(f"{NATIONAL_GAS_API}/find-gas-data-download", params=params, headers={'User-Agent': 'Mozilla/5.0'}, timeout=timeout)
+    res.raise_for_status()
+    names = {'Storage, Daily Aggregated Stock level, D+1': 'storage_stock', 'Storage, Daily Aggregated Available Capacity, D+1': 'storage_space',
+             'LNG, Daily Aggregated Stock level, D+1': 'lng_stock', 'LNG, Daily Aggregated Available Capacity, D+1': 'lng_space'}
+    by_day = {}
+    for row in csv.DictReader(io.StringIO(res.text)):
+        key = names.get(row.get('Data Item'))
+        if key and row.get('Value'):
+            day = datetime.strptime(row['Applicable For'], '%d/%m/%Y').strftime('%Y-%m-%d')
+            by_day.setdefault(day, {})[key] = float(row['Value']) / 1e6  # kWh -> GWh
+    complete = [d for d, v in by_day.items() if len(v) == len(names)]
+    if not complete: return None
+    day = max(complete)
+    return {'stock_gas_day': day, **{f"{k}_gwh": v for k, v in by_day[day].items()}}
+
+def fetch_gas(now_utc, timeout=20):
+    """Everything for one gas_snapshots row, or None if the live flows aren't available."""
+    try:
+        gas = fetch_gas_flows(timeout)
+    except Exception as e:
+        print(f"Gas flows error: {e}")
+        return None
+    try:
+        gas.update(fetch_gas_stocks(now_utc, timeout) or {})
+    except Exception as e:
+        print(f"Gas stock levels error: {e}")
+    return gas
 
 
 LOG_FILE = 'harvester.log'
@@ -692,6 +785,9 @@ def fetch_and_store():
         # === GRID BATTERIES (UNOFFICIAL ESTIMATE) ===
         bess_discharge_mw, bess_charge_mw = fetch_battery_flow(now_utc, req_timeout)
 
+        # === NATIONAL GAS ===
+        gas = fetch_gas(now_utc, req_timeout)
+
         # === DATABASE INJECTION ===
         conn = sqlite3.connect('grid_data.db')
         cursor = conn.cursor()
@@ -719,6 +815,18 @@ def fetch_and_store():
             embedded_wind_mw,
             bess_discharge_mw, bess_charge_mw
         ))
+        if gas:
+            cursor.execute(GAS_TABLE)
+            cursor.execute('''
+                INSERT OR REPLACE INTO gas_snapshots
+                (timestamp, flows_time, linepack_mcm, supply_mcmd, demand_mcmd, supply_json, demand_json,
+                 stock_gas_day, storage_stock_gwh, storage_space_gwh, lng_stock_gwh, lng_space_gwh)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                now_utc.strftime('%Y-%m-%dT%H:%M:%SZ'), gas['flows_time'], gas['linepack_mcm'], gas['supply_mcmd'], gas['demand_mcmd'],
+                json.dumps(gas['supply']), json.dumps(gas['demand']),
+                gas.get('stock_gas_day'), gas.get('storage_stock_gwh'), gas.get('storage_space_gwh'), gas.get('lng_stock_gwh'), gas.get('lng_space_gwh')
+            ))
         conn.commit()
         conn.close()
         print(f"-> Success! Row added.")

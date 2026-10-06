@@ -51,6 +51,7 @@ let genChartInstance, flowChartInstance, historyChartInstance, carbonChartInstan
 let sparkDemand, sparkGen, sparkFlow, sparkFreq, sparkPrice, sparkMiPrice, sparkNiv, sparkCarbon, sparkPwLoad, sparkPwSolar, sparkPwBatt, sparkPwGrid, sparkOctImp, sparkOctExp;
 let chartPwLoad, chartPwSolar, chartPwBatt, chartPwGrid, chartPriceDetailInstance, chartOctoDetailInstance;
 let chartFreqDetailInstance, chartNivDetailInstance, chartBatteryInstance;
+let sparkGasLinepack, sparkGasSupply, sparkGasDemand, chartGasSupply, chartGasDemand, chartGasHistory;
 let forecastTempChart, forecastSolarChart, forecastRainChart, forecastWindChart;
 
 let historyMode = 'GW', forecastMode = 24, powerUnit = 'kW', interconnectorMode = 'GW';
@@ -1149,6 +1150,7 @@ function renderDashboardData(data) {
     }
 
     renderBatteryPanel(data, timeLabels);
+    renderGasSection(data);
 
     let bridgedIntensity = [];
     let lastValidCarbon = rawIntensity.find(v => v > 0) || 0;
@@ -1249,6 +1251,95 @@ function renderBatteryPanel(data, timeLabels) {
             responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
             plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => ctx.raw === null ? 'No estimate' : `${ctx.raw >= 0 ? 'Discharging' : 'Charging'} ${Math.abs(ctx.raw).toFixed(2)} GW (net)` } } },
             scales: { x: { grid: { display: false }, ticks: { color: '#A1A1AA', maxTicksLimit: 8 } }, y: { suggestedMin: 0, suggestedMax: 0, grid: { color: '#3F3F46' }, ticks: { color: '#A1A1AA', callback: v => `${+v.toFixed(2)} GW` } } }
+        }
+    });
+}
+
+const GAS_SUPPLY_COLOURS = { 'North Sea (UK & Norway)': '#30C5D5', 'Norway (Langeled)': '#60A5FA', 'LNG': '#F050F8', 'Storage': '#00D241', 'Continent (BBL, IUK)': '#A1A1AA' };
+const GAS_DEMAND_COLOURS = { 'Homes & businesses': '#D4D4D8', 'Power stations': '#F6643C', 'Industry': '#A1A1AA', 'Exports': '#FF00A0', 'Storage injection': '#00D241' };
+
+function gasBarChart(instance, canvasId, values, colours) {
+    const labels = Object.keys(values).sort((a, b) => values[b] - values[a]);
+    const data = labels.map(l => values[l]);
+    const bg = labels.map(l => colours[l] || '#3F3F46');
+    if (instance) {
+        instance.data.labels = labels; instance.data.datasets[0].data = data; instance.data.datasets[0].backgroundColor = bg;
+        instance.update();
+        return instance;
+    }
+    return new Chart(document.getElementById(canvasId).getContext('2d'), {
+        type: 'bar',
+        data: { labels, datasets: [{ data, backgroundColor: bg, borderRadius: 5 }] },
+        options: {
+            responsive: true, maintainAspectRatio: false, indexAxis: 'y',
+            plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => `${ctx.raw.toFixed(1)} mcm/d` } },
+                datalabels: { display: true, color: '#FFFFFF', anchor: 'end', align: 'end', font: { size: 12 }, formatter: v => v.toFixed(1) } },
+            layout: { padding: { right: 40 } },
+            scales: { x: { beginAtZero: true, grid: { color: '#3F3F46' }, ticks: { color: '#A1A1AA' } }, y: { grid: { display: false }, ticks: { color: '#FFFFFF', font: { weight: 'bold' },
+                // Split long labels over two lines (at ' (' or the first space) so they fit on narrow screens
+                callback: function(v) { const l = this.getLabelForValue(v); const i = l.indexOf(' (') > 0 ? l.indexOf(' (') : (l.length > 10 ? l.indexOf(' ') : -1); return i > 0 ? [l.slice(0, i), l.slice(i + 1)] : l; } } } }
+        }
+    });
+}
+
+function renderGasSection(data) {
+    const section = document.getElementById('gas-section');
+    if (!section || data.gas === undefined) return;  // page or API from before the gas section existed
+    const g = data.gas;
+    if (!g) { document.getElementById('gas-power-note').innerText = 'Waiting for the first gas reading.'; return; }
+
+    const fmt = (v, dp = 1) => v == null ? '---' : v.toLocaleString(undefined, { minimumFractionDigits: dp, maximumFractionDigits: dp });
+    document.getElementById('gas-linepack').innerText = fmt(g.linepack_mcm, 0);
+    document.getElementById('gas-supply').innerText = fmt(g.supply_mcmd);
+    document.getElementById('gas-demand').innerText = fmt(g.demand_mcmd);
+    const balance = g.supply_mcmd - g.demand_mcmd;
+    document.getElementById('gas-linepack-label').innerText = `Gas held in the pipelines · ${balance >= 0 ? 'filling' : 'emptying'} at ${fmt(Math.abs(balance))} mcm/d`;
+
+    if (g.storage_stock_gwh != null && g.storage_capacity_gwh) {
+        document.getElementById('gas-storage').innerText = fmt(g.storage_stock_gwh / g.storage_capacity_gwh * 100);
+        const lng = g.lng_capacity_gwh ? ` · LNG tanks ${fmt(g.lng_stock_gwh / g.lng_capacity_gwh * 100, 0)}%` : '';
+        document.getElementById('gas-storage-label').innerText = `${fmt(g.storage_stock_gwh / 1000)} of ${fmt(g.storage_capacity_gwh / 1000)} TWh${lng}`;
+    }
+
+    const stockDay = g.stock_gas_day ? ` Stock levels for gas day ${new Date(g.stock_gas_day + 'T12:00:00Z').toLocaleDateString([], { day: 'numeric', month: 'short' })}.` : '';
+    document.getElementById('gas-asof').innerText = `Source: National Gas Transmission. Flows in million m³ per day (mcm/d), latest reading ${g.flows_time} UK time.${stockDay}`;
+    const stale = (Date.now() - new Date(g.updated).getTime()) > 30 * 60 * 1000;
+
+    const pct = g.power_thermal_gw > 0 ? Math.round(g.power_electric_gw / g.power_thermal_gw * 100) : null;
+    document.getElementById('gas-power-note').innerText = (stale ? '⚠ Gas data is more than 30 minutes old. ' : '') +
+        `Gas for power: power stations are burning about ${fmt(g.power_thermal_gw)} GW of gas, and gas plants are generating ${fmt(g.power_electric_gw)} GW of electricity` +
+        (pct ? `, so roughly ${pct}% of the gas's energy is coming out as electricity (approximate: it assumes a typical calorific value and includes CHP plants).` : '.');
+
+    chartGasSupply = gasBarChart(chartGasSupply, 'gasSupplyChart', g.supply, GAS_SUPPLY_COLOURS);
+    chartGasDemand = gasBarChart(chartGasDemand, 'gasDemandChart', g.demand, GAS_DEMAND_COLOURS);
+
+    const labels = g.history.map(h => new Date(h.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+    const lp = g.history.map(h => h.linepack_mcm), sup = g.history.map(h => h.supply_mcmd), dem = g.history.map(h => h.demand_mcmd);
+    sparkGasLinepack = buildSparkline(sparkGasLinepack, 'gasLinepackSpark', lp, labels, '#D4D4D8', 'rgba(212, 212, 216, 0.1)');
+    sparkGasSupply = buildSparkline(sparkGasSupply, 'gasSupplySpark', sup, labels, '#30C5D5', 'rgba(48, 197, 213, 0.1)');
+    sparkGasDemand = buildSparkline(sparkGasDemand, 'gasDemandSpark', dem, labels, '#F6643C', 'rgba(246, 100, 60, 0.1)');
+
+    if (chartGasHistory) {
+        chartGasHistory.data.labels = labels;
+        [sup, dem, lp].forEach((d, i) => chartGasHistory.data.datasets[i].data = d);
+        chartGasHistory.update();
+        return;
+    }
+    chartGasHistory = new Chart(document.getElementById('chartGasHistory').getContext('2d'), {
+        type: 'line',
+        data: { labels, datasets: [
+            { label: 'Supply (mcm/d)', data: sup, borderColor: '#30C5D5', borderWidth: 2, pointRadius: 0, tension: 0.3, yAxisID: 'y' },
+            { label: 'Demand (mcm/d)', data: dem, borderColor: '#F6643C', borderWidth: 2, pointRadius: 0, tension: 0.3, yAxisID: 'y' },
+            { label: 'Linepack (mcm)', data: lp, borderColor: '#D4D4D8', borderDash: [5, 5], borderWidth: 2, pointRadius: 0, tension: 0.3, yAxisID: 'y1' }
+        ] },
+        options: {
+            responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
+            plugins: { legend: { display: true, labels: { color: '#D4D4D8', font: { family: "'Inter', sans-serif" } } } },
+            scales: {
+                x: { grid: { display: false }, ticks: { color: '#A1A1AA', maxTicksLimit: 8 } },
+                y: { position: 'left', grid: { color: '#3F3F46' }, ticks: { color: '#A1A1AA' }, title: { display: true, text: 'mcm/d', color: '#A1A1AA' } },
+                y1: { position: 'right', grid: { drawOnChartArea: false }, ticks: { color: '#D4D4D8' }, title: { display: true, text: 'Linepack (mcm)', color: '#D4D4D8' } }
+            }
         }
     });
 }

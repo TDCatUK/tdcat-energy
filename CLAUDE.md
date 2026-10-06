@@ -28,7 +28,8 @@ cron/launchd on OTTO (every 5 min)
    /admin        templates/admin.html  (edits config.json via POST /api/config)
    /about        templates/about.html  (explains the metrics; keep it in step with any maths changes)
    /api/data     latest row + last 288 rows (≈24 h) + today's Powerwall kWh totals
-   /api/config   GET merges config.json over DEFAULT_CONFIG; POST overwrites config.json
+   /api/config   GET only (public): config.json merged over DEFAULT_CONFIG
+   /admin/api/config  POST: validates and atomically replaces config.json (protected by Cloudflare Access on /admin/*)
 ```
 
 ## Files
@@ -75,6 +76,10 @@ Primary key `timestamp` (ISO UTC string `YYYY-MM-DDTHH:MM:SSZ`). Columns were ad
 
 Elexon has no battery fuel type, so `load_battery_units()` picks batteries out of `/reference/bmunits/all` by National Grid ID convention (5th character `B`, e.g. `BLWNB-1`) or a name matching battery/BESS/energy storage, excluding conventional fuel types (about 146 units, 7.3 GW). Each run, `fetch_battery_flow()` takes each unit's Physical Notification level now (`/datasets/PN/stream`, filtered by `bmUnit`), overridden by the latest Bid-Offer Acceptance in force (`/datasets/BOALF/stream`, 90 min lookback). Batteries outside the BM aren't visible. Elexon FUELINST `OTHER` never goes negative, so batteries aren't in it and aren't double-counted.
 
+## National Gas (GB gas transmission)
+
+`fetch_gas()` in the harvester reads `https://data.nationalgas.com/api/latest-gas-flows` (2-min data, published every 12 min, times in UK local time) and daily stock levels from `/api/find-gas-data-download` (`PUBOBJ330`/`333` storage stock and space left, `PUBOBJ336`/`339` LNG; kWh, latest complete gas day). It writes one row per run to the `gas_snapshots` table (same `timestamp` as `energy_snapshots`), which the harvester creates itself with `CREATE TABLE IF NOT EXISTS`. Supply groups: LNG = Grain + Milford Haven terminals, Storage = storage entry points (incl. Rough), Continent = Bacton IPs, Norway (Langeled) = Easington Langeled entry, North Sea = the remainder of total supply. Rates are mcm/d, linepack mcm. `app.py` `get_gas()` returns `None` until the table exists. The gas-for-power % uses a fixed 39.5 MJ/m³. The full data-item catalogue is at `/api/find-gas-data-folders` (PUBOBJ IDs in each item's description). There's no gas price (SAP) in it.
+
 ## Data sources (endpoints in `.env`)
 
 Elexon BMRS: FUELINST (mix + interconnectors), ITSDO (demand), system-prices (SSP + NIV), market-index (APXMIDP / N2EXMIDP), frequency stream. NESO datastore resource `db6c038f-…` (embedded wind forecast). PV_Live `gsp/0` (national solar). Carbon Intensity `/intensity`. Octopus v1 (Agile import/export unit rates, consumption). Open-Meteo forecast (mph, Europe/London).
@@ -96,7 +101,7 @@ Audit 2026-10-06. Items 1–8 were fixed the same day (see README Changes).
 7. ~~Greenlink (`INTGRNL`) unmapped.~~ Interconnector capacities are still hard-coded in `script.js`.
 8. ~~Carbon intensity fell to 0 when `actual` was null~~; it now falls back to `forecast`.
 9. `station_load_mw` is hard-coded to 500 MW (Elexon uses the same constant, so this is right).
-10. **Security:** Cloudflare Access protects `/admin`, but `/api/config` is public (checked 2026-10-06: GET returns 200 without login), and Flask accepts `POST /api/config` with no auth, so anyone could probably overwrite `config.json`, footer links included. (Not tested, to avoid changing live config.) Fix: move the save route under `/admin/` and cover `/admin/*` in Access, or check the `Cf-Access-Jwt-Assertion` header.
+10. ~~Public `POST /api/config` let anyone overwrite `config.json`.~~ Fixed 2026-10-06: saving moved to `/admin/api/config`. Cloudflare Access covers `/admin/*`, so unauthenticated requests are redirected to login before reaching Flask (checked with GET and POST). Anything new that changes data must also live under `/admin/`.
 11. ~~`datetime.utcnow()` deprecation warnings flooded `harvester.log`.~~ Fixed 2026-10-06; the old log was cleared. The log now keeps 90 days (about 30 KB/day).
 12. The stacked supply (generation + gross imports) sits a median 0.8 GW (2.4%) above the dashed demand line (ITSDO + embedded), ranging from −1.3 to +3.8 GW over a day. This comes from timing (5-min FUELINST vs half-hourly ITSDO) and modelled embedded generation; `about.html` explains it.
 13. FUELINST `Other` had a one-off 10.2 GW value in the last 30 days (normally ~0.5–1 GW): probably a bad Elexon row, not yet investigated.

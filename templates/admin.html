@@ -420,14 +420,14 @@
                 }
             };
 
-            await fetch('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+            await fetch('/admin/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
             const toast = document.getElementById('toast');
             toast.classList.remove('opacity-0'); setTimeout(() => toast.classList.add('opacity-0'), 2500);
         }
 
         async function resetDefaults() {
             if(confirm("Are you sure you want to revert all colors to the factory defaults?")) {
-                await fetch('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(DEFAULT_CONFIG) });
+                await fetch('/admin/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(DEFAULT_CONFIG) });
                 renderInputs(DEFAULT_CONFIG);
             }
         }
