@@ -29,8 +29,10 @@ cron/launchd on OTTO (every 5 min)
    /admin        templates/admin.html  (edits config.json via POST /api/config)
    /about        templates/about.html  (explains the metrics; keep it in step with any maths changes)
    /changelog    templates/changelog.html  (public, plain-English list of changes)
+   /status       templates/status.html  (data-source health; reads /api/status)
    /api/demand/recent      last 31 days of NESO half-hourly ND + rooftop solar, stamped with UK local start time
    /api/demand/duck?month= average ND/solar by half-hour for that month, every year since 2010, plus solar records
+   /api/status   each source's state, last good fetch, error, 7-day hourly record (?summary=1 for the menu dot)
    /api/forecast           Agile import/export rates and the national carbon forecast from the current half-hour on
    /api/frequency?hours=   every 15-second frequency reading for the last 0.25–24 h, plus today's low/high/time outside limits
    /api/data     latest row + last 288 rows (≈24 h) + today's Powerwall kWh totals
@@ -100,6 +102,10 @@ Gotchas: NESO's `datastore_search` breaks when given `fields`, so use `datastore
 ## Agile prices and carbon forecast
 
 `fetch_forecasts()` runs every 30 minutes (`fetch_log` name `forecasts`; `fetch_due(..., 0.4)` so it isn't skipped by a few seconds). It fetches the public Octopus unit rates for `OCT_IMPORT_TARIFF` and `OCT_EXPORT_TARIFF` from the current half-hour on (tomorrow's Agile rates, to 23:00 UK, appear about 16:00) and the national Carbon Intensity `/intensity/{from}/fw48h` forecast. They're upserted into `agile_rates` (`valid_from` PK, `import_p`, `export_p` in p/kWh inc VAT; a missing side never overwrites a stored rate) and `carbon_forecast` (`period_from` PK, `forecast`, `actual`, `index_label`). Both keep history. `/api/forecast` returns everything from the current half-hour on; `script.js` picks the cheapest/most expensive/greenest 6-slot runs itself (`bestWindow`). Carbon colours use the same <100 / <200 g thresholds as the Carbon card.
+
+## Data-source health (the Status page)
+
+Every fetch in the harvester calls `report(source, ok, error, data_time)`; `save_health()` writes the results with the snapshot row (in the offline path too). `source_status` keeps one row per source: `last_ok`, `last_attempt`, `last_error` (+ `last_error_at`), `data_time` (how recent the source's own data is: ISO UTC, a date, or for gas a UK clock time) and `fails` (consecutive failures, reset on success). `source_runs` logs each run's `ok` and `failed` keys (comma lists) and its duration in `seconds`, trimmed to 90 days. Error text comes from `short_error()` and is public, so it must never include URLs or response bodies (Octopus consumption URLs contain the MPAN and meter serial). `SOURCES` in `app.py` lists the keys, names, groups and fetch intervals; a new source needs a `report()` call in the harvester and an entry there. States: `ok`; `warn` after one failure or 3 intervals without success; `fail` after 3 failures in a row or 12 intervals without success. Overall is `fail` if the harvester hasn't run for 15 minutes. Timed sources (NESO, forecasts) only appear in runs where they were due. Keys: internet, fuelinst, itsdo, frequency, system_prices, market_index, batteries, pvlive, lv_wind, carbon, carbon_forecast, neso_demand, neso_history, gas, gas_storage, powerwall, octopus_rates, agile_forecast, octopus_meters, weather, cloudflare.
 
 ## Data sources (endpoints in `.env`)
 

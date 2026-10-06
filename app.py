@@ -306,6 +306,122 @@ def frequency():
     conn.close()
     return jsonify({"readings": [[t, hz] for t, hz in readings], "latest": latest, "low": low, "high": high, "today": today})
 
+# === DATA-SOURCE HEALTH (the /status page) ===
+# Grouped as on the page: (key the harvester reports under, name, what it is, how often it's fetched in minutes)
+SOURCES = [
+    ("Harvester", [
+        ("internet", "Internet connection", "Checked at the start of every run", 5),
+    ]),
+    ("Grid: Elexon", [
+        ("fuelinst", "Generation mix", "Output by fuel type and interconnector flows (FUELINST)", 5),
+        ("itsdo", "Demand", "Transmission system demand (ITSDO)", 5),
+        ("frequency", "Frequency", "Every 15-second reading", 5),
+        ("system_prices", "Balancing price", "System sell price and imbalance volume", 5),
+        ("market_index", "Market index price", "MIDP (EPEX SPOT)", 5),
+        ("batteries", "Grid batteries", "Physical Notifications and Bid-Offer Acceptances", 5),
+    ]),
+    ("Grid: solar, wind & carbon", [
+        ("pvlive", "Solar", "National solar estimate (PV_Live, Sheffield Solar)", 5),
+        ("lv_wind", "Small embedded wind", "NESO embedded wind forecast", 5),
+        ("carbon", "Carbon intensity", "NESO Carbon Intensity API, current half-hour", 5),
+        ("carbon_forecast", "Carbon forecast", "NESO Carbon Intensity API, next 48 hours", 30),
+        ("neso_demand", "Half-hourly demand", "NESO Demand Data Update (When Demand Shifts)", 180),
+        ("neso_history", "Historic demand", "NESO Historic Demand Data (Duck Curve)", 1440),
+    ]),
+    ("Gas: National Gas", [
+        ("gas", "Gas flows", "Linepack, supply and demand", 5),
+        ("gas_storage", "Gas storage", "Daily storage and LNG stock levels", 5),
+    ]),
+    ("Home", [
+        ("powerwall", "Powerwall", "Tesla gateway on the home network", 5),
+        ("octopus_rates", "Agile rate now", "Octopus import and export rates for this half-hour", 5),
+        ("agile_forecast", "Agile prices ahead", "Octopus rates published for later today and tomorrow", 30),
+        ("octopus_meters", "Smart meters", "Octopus daily import, export and gas readings", 5),
+        ("weather", "Weather", "Open-Meteo current conditions and forecast", 5),
+    ]),
+    ("Site", [
+        ("cloudflare", "Visitor stats", "Cloudflare analytics", 5),
+    ]),
+]
+HARVESTER_LATE_MIN = 15  # the harvester runs every 5 minutes
+
+def parse_utc(text):
+    """ISO time from the harvester ('...Z', sometimes without seconds) as an aware UTC datetime."""
+    return datetime.fromisoformat(text.replace('Z', '+00:00'))
+
+def source_state(row, every_min, now):
+    """ok, warn (a failed try, or late) or fail (3 failures in a row, or nothing good for 12 intervals)."""
+    if not row or not row['last_attempt']: return 'unknown'
+    since_ok = (now - parse_utc(row['last_ok'])).total_seconds() / 60 if row['last_ok'] else None
+    if since_ok is None or since_ok > every_min * 12 or row['fails'] >= 3: return 'fail'
+    if row['fails'] or since_ok > every_min * 3: return 'warn'
+    return 'ok'
+
+@app.route('/status')
+def status_page(): return render_template('status.html')
+
+@app.route('/api/status')
+def status():
+    """Each data source's state, last good fetch and recent record. ?summary=1 skips the per-hour history."""
+    now = datetime.now(timezone.utc)
+    summary = request.args.get('summary') == '1'
+    conn = get_db_connection()
+    latest = {r['source']: dict(r) for r in table_rows(conn, 'SELECT * FROM source_status')}
+    days = 1 if summary else 7
+    runs = table_rows(conn, 'SELECT * FROM source_runs WHERE timestamp >= ? ORDER BY timestamp',
+                      ((now - timedelta(days=days)).strftime('%Y-%m-%dT%H:%M:%SZ'),))
+    last_snapshot = conn.execute('SELECT MAX(timestamp) FROM energy_snapshots').fetchone()[0]
+    conn.close()
+
+    # Hourly cells for the last 7 days: [runs that tried the source, runs where it failed]
+    first_hour = now.replace(minute=0, second=0, microsecond=0) - timedelta(hours=167)
+    cells, totals = {}, {}
+    for run in runs:
+        t = parse_utc(run['timestamp'])
+        hour = int((t - first_hour).total_seconds() // 3600)
+        recent = now - t <= timedelta(days=1)
+        for key, failed in [(k, False) for k in (run['ok'] or '').split(',') if k] + [(k, True) for k in (run['failed'] or '').split(',') if k]:
+            if not summary and 0 <= hour < 168:
+                cell = cells.setdefault(key, [[0, 0] for _ in range(168)])[hour]
+                cell[0] += 1; cell[1] += failed
+            for span in ('7d', '24h') if recent else ('7d',):
+                tally = totals.setdefault((key, span), [0, 0])
+                tally[0] += 1; tally[1] += failed
+
+    groups, states = [], []
+    for group, sources in SOURCES:
+        items = []
+        for key, name, description, every in sources:
+            row = latest.get(key)
+            state = source_state(row, every, now)
+            states.append(state)
+            uptime = {span: (100 * (1 - totals[(key, span)][1] / totals[(key, span)][0]) if (key, span) in totals else None) for span in ('24h', '7d')}
+            item = {"key": key, "name": name, "description": description, "every_min": every, "state": state, "uptime": uptime,
+                    **({k: row[k] for k in ('last_ok', 'last_attempt', 'last_error', 'last_error_at', 'data_time', 'fails')} if row else {})}
+            if not summary:
+                item["hours"] = [None if not a else round(1 - f / a, 2) for a, f in cells.get(key, [[0, 0]] * 168)]
+            items.append(item)
+        groups.append({"name": group, "sources": items})
+
+    last_run = runs[-1] if runs else None
+    last_time = last_run['timestamp'] if last_run else last_snapshot
+    harvester_late = not last_time or (now - parse_utc(last_time)).total_seconds() > HARVESTER_LATE_MIN * 60
+    overall = 'fail' if harvester_late or 'fail' in states else 'warn' if 'warn' in states else 'ok'
+    runs_24h = [r for r in runs if now - parse_utc(r['timestamp']) <= timedelta(days=1)]
+    return jsonify({
+        "now": now.strftime('%Y-%m-%dT%H:%M:%SZ'),
+        "overall": overall,
+        "counts": {s: states.count(s) for s in ('ok', 'warn', 'fail', 'unknown')},
+        "harvester": {
+            "last_run": last_time, "late": harvester_late,
+            "seconds": last_run['seconds'] if last_run else None,
+            "runs_24h": len(runs_24h),
+            "avg_seconds_24h": sum(r['seconds'] or 0 for r in runs_24h) / len(runs_24h) if runs_24h else None,
+        },
+        "first_hour": first_hour.strftime('%Y-%m-%dT%H:%M:%SZ'),
+        "groups": groups,
+    })
+
 @app.route('/api/data')
 def get_data():
     conn = get_db_connection()

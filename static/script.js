@@ -999,6 +999,18 @@ function drawAgileForecast(d) {
     });
 }
 
+// The dot by Status in the menu: green when every data source is working, amber or red when one isn't
+function loadStatusDot() {
+    const dot = document.getElementById('status-dot');
+    if (!dot) return;
+    fetch('/api/status?summary=1').then(r => r.ok ? r.json() : null).then(d => {
+        if (!d) return;
+        dot.style.background = { ok: '#4ADE80', warn: '#F59E0B', fail: '#EF4444' }[d.overall];
+        const failing = d.groups.flatMap(g => g.sources).filter(s => s.state === 'warn' || s.state === 'fail').map(s => s.name);
+        document.getElementById('status-link').title = d.harvester.late ? 'The harvester is late' : failing.length ? `Needs a look: ${failing.join(', ')}` : 'All data sources working';
+    }).catch(() => {});
+}
+
 // Run a flow line's dots backwards (end to start) or forwards
 function setFlowDirection(idPrefix, reverse) {
     [1, 2].forEach(n => {
@@ -1022,6 +1034,7 @@ function updateDashboard() {
         renderForecastCharts();
         loadFrequency();
         loadAgileForecast();
+        loadStatusDot();
     }).catch(e => console.error("Update failed:", e));
 }
 

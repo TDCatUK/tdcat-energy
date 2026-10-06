@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Status | energy.tdcat.com</title>
+    <link rel="icon" type="image/png" href="/static/favicon.png">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = { theme: { extend: { colors: { 'brand-cyan': '#30C5D5', 'ui-darkest': '#000000', 'ui-dark': '#1C1C1F', 'ui-card': '#252529', 'ui-grey': '#3F3F46', 'ui-light': '#D4D4D8' } } } }
+    </script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+        body { font-family: 'Inter', sans-serif; }
+        .hours { display: grid; grid-template-columns: repeat(168, minmax(0, 1fr)); gap: 1px; }
+        .hours div { height: 12px; border-radius: 1px; }
+    </style>
+</head>
+<body class="bg-ui-dark text-white min-h-screen relative pb-10">
+
+    <header class="bg-ui-darkest border-b border-ui-grey p-4 sticky top-0 z-40">
+        <div class="max-w-[1000px] mx-auto flex items-center justify-between">
+            <div class="flex items-center gap-3">
+                <img src="/static/logo.png" alt="Logo" class="h-8 object-contain" onerror="this.outerHTML='<div class=\'w-8 h-8 bg-brand-cyan rounded-md flex items-center justify-center text-ui-darkest font-bold\'>TD</div>'">
+                <h1 class="text-2xl font-bold text-ui-light">Status</h1>
+            </div>
+            <a href="/" class="text-sm font-semibold text-brand-cyan hover:text-white transition">← Back to Dashboard</a>
+        </div>
+    </header>
+
+    <main class="max-w-[1000px] mx-auto px-4 mt-10 space-y-6">
+        <section class="bg-ui-card p-6 rounded-2xl border border-ui-grey shadow-lg flex items-start gap-4">
+            <span id="overall-dot" class="w-4 h-4 rounded-full mt-1.5 flex-shrink-0 bg-ui-grey"></span>
+            <div class="min-w-0">
+                <h2 id="overall-title" class="text-xl font-bold text-white">Checking…</h2>
+                <p id="overall-note" class="text-sm text-ui-light mt-1"></p>
+            </div>
+        </section>
+
+        <p class="text-sm text-ui-light leading-relaxed">Every 5 minutes the harvester collects data from each of these sources (a few are checked less often). This page shows when each last worked and how recent its data is. The bars cover the last 7 days, one block per hour: <span class="text-[#4ADE80] font-semibold">green</span> when every try worked, <span class="text-[#F59E0B] font-semibold">amber</span> when some failed, <span class="text-[#EF4444] font-semibold">red</span> when all failed and grey when it wasn't tried. The page refreshes every minute.</p>
+
+        <div id="groups" class="space-y-6"></div>
+    </main>
+
+    <script>
+        const COLOURS = { ok: '#4ADE80', warn: '#F59E0B', fail: '#EF4444', unknown: '#52525B' };
+        const esc = text => String(text ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+        const parse = t => new Date(t.replace(/Z$/, '').length === 16 ? t.replace(/Z$/, ':00Z') : t);
+        const clock = d => d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        const sameDay = (a, b) => a.toDateString() === b.toDateString();
+        // Round down, so 99.96% shows as 99.9% rather than 100.0%
+        const percent = p => p === 100 ? '100' : (Math.floor(p * 10) / 10).toFixed(1);
+
+        function ago(t) {
+            const mins = Math.round((Date.now() - parse(t)) / 60000);
+            if (mins < 1) return 'just now';
+            if (mins < 90) return `${mins} min ago`;
+            if (mins < 48 * 60) return `${Math.round(mins / 60)} h ago`;
+            return `${Math.round(mins / 1440)} days ago`;
+        }
+
+        // Data times come as full UTC times, plain dates, or (gas) a UK clock time
+        function dataTime(t) {
+            if (!t) return '';
+            if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return new Date(t + 'T12:00:00Z').toLocaleDateString([], { day: 'numeric', month: 'short' });
+            if (/^\d{4}-\d{2}-\d{2}T/.test(t)) {
+                const d = parse(t), now = new Date(), tomorrow = new Date(now.getTime() + 86400000);
+                if (sameDay(d, now)) return clock(d);
+                if (sameDay(d, tomorrow)) return `${clock(d)} tomorrow`;
+                return `${d.toLocaleDateString([], { day: 'numeric', month: 'short' })} ${clock(d)}`;
+            }
+            return t;
+        }
+
+        function stateNote(s) {
+            if (s.state === 'unknown') return `<p class="text-xs text-[#A1A1AA] mt-1">Waiting for its first check.</p>`;
+            if (s.fails) return `<p class="text-xs mt-1" style="color: ${COLOURS[s.state]}">The last ${s.fails === 1 ? 'try' : s.fails + ' tries'} failed: ${esc(s.last_error)}.</p>`;
+            if (s.state === 'warn') return `<p class="text-xs mt-1" style="color: ${COLOURS.warn}">Late: last worked ${ago(s.last_ok)}.</p>`;
+            if (s.last_error && Date.now() - parse(s.last_error_at) < 86400000)
+                return `<p class="text-xs text-[#A1A1AA] mt-1">Recovered. Last failure ${ago(s.last_error_at)}: ${esc(s.last_error)}.</p>`;
+            return '';
+        }
+
+        function hourCells(s, firstHour) {
+            return (s.hours || []).map((v, i) => {
+                const start = new Date(firstHour.getTime() + i * 3600000);
+                const colour = v == null ? '#3F3F46' : v === 1 ? COLOURS.ok : v === 0 ? COLOURS.fail : COLOURS.warn;
+                const label = v == null ? 'not tried' : v === 1 ? 'all worked' : v === 0 ? 'all failed' : `${Math.round(v * 100)}% worked`;
+                return `<div style="background: ${colour}${v == null ? '; opacity: 0.5' : ''}" title="${start.toLocaleDateString([], { weekday: 'short' })} ${clock(start)}: ${label}"></div>`;
+            }).join('');
+        }
+
+        function render(d) {
+            const total = d.counts.ok + d.counts.warn + d.counts.fail;
+            const h = d.harvester;
+            document.getElementById('overall-dot').style.background = COLOURS[d.overall];
+            document.getElementById('overall-title').innerText = h.late
+                ? (h.last_run ? `The harvester hasn't run since ${dataTime(h.last_run)}` : `The harvester hasn't reported yet`)
+                : d.counts.fail ? `${d.counts.fail} of ${total} sources ${d.counts.fail === 1 ? 'is' : 'are'} failing` + (d.counts.warn ? `, ${d.counts.warn} ${d.counts.warn === 1 ? 'needs' : 'need'} a look` : '')
+                : d.counts.warn ? `${d.counts.warn} of ${total} sources ${d.counts.warn === 1 ? 'needs' : 'need'} a look`
+                : `All ${total} sources are working`;
+            document.getElementById('overall-note').innerText = h.last_run
+                ? `Last run ${ago(h.last_run)}${h.seconds != null ? `, took ${h.seconds.toFixed(1)} s` : ''}. ${h.runs_24h} runs in the last 24 hours` +
+                  (h.avg_seconds_24h != null ? `, averaging ${h.avg_seconds_24h.toFixed(1)} s.` : '.')
+                : '';
+
+            const firstHour = parse(d.first_hour);
+            document.getElementById('groups').innerHTML = d.groups.map(g => `
+                <section class="bg-ui-card p-6 rounded-2xl border border-ui-grey shadow-lg">
+                    <h3 class="text-xs font-bold uppercase tracking-wider text-brand-cyan mb-2">${esc(g.name)}</h3>
+                    <div class="divide-y divide-ui-grey/60">
+                        ${g.sources.map(s => `
+                        <div class="py-3">
+                            <div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+                                <div class="flex items-baseline gap-2 min-w-0">
+                                    <span class="w-2.5 h-2.5 rounded-full flex-shrink-0 self-center" style="background: ${COLOURS[s.state]}"></span>
+                                    <span class="font-semibold text-white">${esc(s.name)}</span>
+                                    <span class="text-xs text-[#A1A1AA] hidden sm:inline truncate">${esc(s.description)}</span>
+                                </div>
+                                <div class="text-xs text-[#A1A1AA]">${[
+                                    s.last_ok ? `Last worked ${ago(s.last_ok)}` : '',
+                                    s.data_time ? `latest data ${esc(dataTime(s.data_time))}` : '',
+                                    s.uptime && s.uptime['7d'] != null ? `${percent(s.uptime['7d'])}% over 7 days` : '',
+                                    s.every_min > 5 ? `checked every ${s.every_min >= 1440 ? 'day' : s.every_min >= 60 ? s.every_min / 60 + ' hours' : s.every_min + ' min'}` : ''
+                                ].filter(Boolean).join(' · ')}</div>
+                            </div>
+                            ${stateNote(s)}
+                            <div class="hours mt-2">${hourCells(s, firstHour)}</div>
+                        </div>`).join('')}
+                    </div>
+                    <div class="flex justify-between text-[10px] text-[#71717A] mt-1"><span>7 days ago</span><span>Now</span></div>
+                </section>`).join('');
+        }
+
+        function load() {
+            fetch('/api/status').then(r => r.ok ? r.json() : null).then(d => { if (d) render(d); }).catch(() => {});
+        }
+        load();
+        setInterval(load, 60000);
+    </script>
+</body>
+</html>

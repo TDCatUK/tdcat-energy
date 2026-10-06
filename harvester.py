@@ -47,6 +47,47 @@ HOSTNAME = "energy.tdcat.com"
 LONDON = ZoneInfo("Europe/London")
 
 
+# === SOURCE HEALTH (for the /status page) ===
+# Each fetch reports how it went; save_health() writes it out with the snapshot row.
+HEALTH_TABLES = [
+    """CREATE TABLE IF NOT EXISTS source_status (source TEXT PRIMARY KEY, last_ok TEXT, last_attempt TEXT,
+        last_error TEXT, last_error_at TEXT, data_time TEXT, fails INTEGER DEFAULT 0)""",
+    "CREATE TABLE IF NOT EXISTS source_runs (timestamp TEXT PRIMARY KEY, ok TEXT, failed TEXT, seconds REAL)",
+]
+HEALTH_KEEP_DAYS = 90
+health = {}  # source -> (ok, error, data_time) for this run
+
+def report(source, ok, error=None, data_time=None):
+    health[source] = (bool(ok), None if ok else (error or 'No data returned'), data_time)
+
+def short_error(e):
+    """A short reason that's safe to show publicly: never the URL (some contain meter numbers) or the response body."""
+    if isinstance(e, requests.exceptions.HTTPError) and e.response is not None:
+        return f"HTTP {e.response.status_code} {e.response.reason or ''}".strip()
+    if isinstance(e, requests.exceptions.Timeout): return 'Timed out'
+    if isinstance(e, requests.exceptions.ConnectionError): return "Couldn't connect"
+    if isinstance(e, (ValueError, KeyError, IndexError, TypeError, StopIteration)): return 'Unexpected response'
+    return type(e).__name__
+
+def save_health(cursor, now_utc, started):
+    """Update each reported source's latest state and log which sources worked on this run."""
+    stamp = now_utc.strftime('%Y-%m-%dT%H:%M:%SZ')
+    for table in HEALTH_TABLES:
+        cursor.execute(table)
+    for source, (ok, error, data_time) in health.items():
+        cursor.execute("INSERT OR IGNORE INTO source_status (source, fails) VALUES (?, 0)", (source,))
+        if ok:
+            cursor.execute("UPDATE source_status SET last_ok = ?, last_attempt = ?, fails = 0, data_time = COALESCE(?, data_time) WHERE source = ?",
+                           (stamp, stamp, data_time, source))
+        else:
+            cursor.execute("UPDATE source_status SET last_attempt = ?, last_error = ?, last_error_at = ?, fails = fails + 1 WHERE source = ?",
+                           (stamp, error, stamp, source))
+    cursor.execute("INSERT OR REPLACE INTO source_runs VALUES (?, ?, ?, ?)", (
+        stamp, ','.join(k for k, h in health.items() if h[0]), ','.join(k for k, h in health.items() if not h[0]),
+        round((datetime.now(timezone.utc) - started).total_seconds(), 1)))
+    cursor.execute("DELETE FROM source_runs WHERE timestamp < ?", ((now_utc - timedelta(days=HEALTH_KEEP_DAYS)).strftime('%Y-%m-%dT%H:%M:%SZ'),))
+
+
 def get_cloudflare_stats(debug=False):
     """Fetch last ~24h Cloudflare stats (visits, requests, bytes) for energy.tdcat.com"""
     if not CLOUDFLARE_API_TOKEN or not CLOUDFLARE_ZONE_ID:
@@ -93,6 +134,7 @@ def get_cloudflare_stats(debug=False):
         if data.get('errors'):
             if debug:
                 print("Cloudflare GraphQL Errors:", data['errors'])
+            report('cloudflare', False, 'Cloudflare API error')
             return 0, 0, 0
 
         groups = (data.get('data', {})
@@ -100,6 +142,7 @@ def get_cloudflare_stats(debug=False):
                     .get('zones', [{}])[0]
                     .get('httpRequestsAdaptiveGroups', []))
 
+        report('cloudflare', True)
         if not groups:
             return 0, 0, 0
 
@@ -115,11 +158,13 @@ def get_cloudflare_stats(debug=False):
     except Exception as e:
         if debug:
             print(f"Cloudflare API error: {e}")
+        report('cloudflare', False, short_error(e))
         return 0, 0, 0
 
 def fetch_octo_rate(tariff_code, now_utc, timeout=20):
+    """The unit rate (p/kWh inc VAT) for the current half-hour, or None if it couldn't be fetched."""
     if not OCTOPUS_BASE_URL or not tariff_code:
-        return 0.0
+        return None
 
     url = f"{OCTOPUS_BASE_URL.rstrip('/')}/products/{tariff_code}/electricity-tariffs/E-1R-{tariff_code}-{OCT_REGION}/standard-unit-rates/"
 
@@ -163,17 +208,21 @@ def fetch_octo_rate(tariff_code, now_utc, timeout=20):
 
             # Debug helper — shows what the API actually returned
             print(f"Octopus {tariff_code}: No matching rate in window (got {len(data['results'])} periods)")
+            report('octopus_rates', False, 'No rate for the current half-hour')
         else:
             print(f"Octopus {tariff_code}: Empty results from API")
+            report('octopus_rates', False, 'No rates returned')
 
     except requests.exceptions.RequestException as e:
         print(f"Octopus rate HTTP error ({tariff_code}): {e}")
         if 'res' in locals():
             print(f"   Status: {res.status_code}  Body: {res.text[:400]}")
+        report('octopus_rates', False, short_error(e))
     except Exception as e:
         print(f"Octopus rate parse error ({tariff_code}): {e}")
+        report('octopus_rates', False, short_error(e))
 
-    return 0.0
+    return None
 
 def fetch_octo_day_totals(meter_id, serial, meter_type, start, end, timeout=20):
     """Consumption between start and end, summed per UK day: {date: (total, half_hours)}."""
@@ -200,7 +249,7 @@ def fetch_octo_daily(timeout=20):
     today = datetime.now(LONDON).date()
     uk_midnight = lambda d: datetime.combine(d, time.min, LONDON).astimezone(timezone.utc)
     meters = [(OCT_IMP_MPAN, OCT_SERIAL, "electricity"), (OCT_EXP_MPAN, OCT_SERIAL, "electricity"), (OCT_GAS_MPRN, OCT_GAS_SERIAL, "gas")]
-    per_meter = []
+    per_meter, errors = [], []
     for meter_id, serial, meter_type in meters:
         if not meter_id or not serial:
             per_meter.append(None)
@@ -209,6 +258,7 @@ def fetch_octo_daily(timeout=20):
             per_meter.append(fetch_octo_day_totals(meter_id, serial, meter_type, uk_midnight(today - timedelta(days=3)), uk_midnight(today), timeout))
         except Exception as e:
             print(f"Octopus consumption error ({meter_type} {meter_id[-4:]}): {e}")
+            errors.append(short_error(e))
             per_meter.append({})
 
     def complete(days, day):
@@ -220,6 +270,10 @@ def fetch_octo_daily(timeout=20):
     if chosen is None:
         # A meter has stopped reporting: fall back to the latest day with complete import data
         chosen = next((d for d in candidates if per_meter[0] and complete(per_meter[0], d)), None)
+        report('octopus_meters', False, errors[0] if errors else 'Not every meter has a complete day in the last 3 days',
+               chosen.isoformat() if chosen else None)
+    else:
+        report('octopus_meters', True, data_time=chosen.isoformat())
     if chosen is None: return 0, 0, 0, ""
     imp, exp, gas = (m.get(chosen, (0, 0))[0] if m else 0 for m in per_meter)
     return imp, exp, gas, chosen.strftime('%d %b')
@@ -300,13 +354,18 @@ def fetch_battery_flow(now_utc, timeout=20):
     aren't visible, so this undercounts. Returns (None, None) if the data isn't available.
     """
     units = load_battery_units(timeout)
-    if not units: return None, None
+    if not units:
+        report('batteries', False, 'Battery unit list unavailable')
+        return None, None
     try:
         pn = fetch_battery_segments('PN', now_utc - timedelta(minutes=1), now_utc + timedelta(minutes=1), units, timeout)
         boalf = fetch_battery_segments('BOALF', now_utc - BOALF_LOOKBACK, now_utc + timedelta(minutes=1), units, timeout)
-        return battery_flow_at(now_utc, pn, boalf)
+        flow = battery_flow_at(now_utc, pn, boalf)
+        report('batteries', flow[0] is not None)
+        return flow
     except Exception as e:
         print(f"Battery estimate error: {e}")
+        report('batteries', False, short_error(e))
         return None, None
 
 
@@ -475,13 +534,17 @@ def fetch_gas(now_utc, timeout=20):
     """Everything for one gas_snapshots row, or None if the live flows aren't available."""
     try:
         gas = fetch_gas_flows(timeout)
+        report('gas', True, data_time=gas['flows_time'])
     except Exception as e:
         print(f"Gas flows error: {e}")
+        report('gas', False, short_error(e))
         return None
     try:
         gas.update(fetch_gas_stocks(now_utc, timeout) or {})
+        report('gas_storage', 'stock_gas_day' in gas, 'No complete gas day in the last few days', gas.get('stock_gas_day'))
     except Exception as e:
         print(f"Gas stock levels error: {e}")
+        report('gas_storage', False, short_error(e))
     return gas
 
 
@@ -610,12 +673,20 @@ def fetch_neso_demand(timeout=60):
     out = {'attempted': []}
     if fetch_due('neso_recent', 3):
         out['attempted'].append('neso_recent')
-        try: out['recent'] = fetch_recent_demand(timeout)
-        except Exception as e: print(f"NESO recent demand error: {e}")
+        try:
+            out['recent'] = fetch_recent_demand(timeout)
+            report('neso_demand', out['recent'], 'No rows returned', max((r[0] for r in out['recent']), default=None))
+        except Exception as e:
+            print(f"NESO recent demand error: {e}")
+            report('neso_demand', False, short_error(e))
     if fetch_due('neso_history', 24):
         out['attempted'].append('neso_history')
-        try: out['history'] = fetch_demand_history(now_utc, out.get('recent'))
-        except Exception as e: print(f"NESO demand history error: {e}")
+        try:
+            out['history'] = fetch_demand_history(now_utc, out.get('recent'))
+            report('neso_history', True)
+        except Exception as e:
+            print(f"NESO demand history error: {e}")
+            report('neso_history', False, short_error(e))
     return out
 
 
@@ -657,10 +728,17 @@ def fetch_forecasts(now_utc, timeout=20):
             exp = fetch_agile_rates(OCT_EXP_TARIFF, half_hour, timeout) if OCT_EXP_TARIFF else {}
             out['agile'] = [(vf, (imp.get(vf) or exp.get(vf))[0], imp.get(vf, (None, None))[1], exp.get(vf, (None, None))[1])
                             for vf in sorted(set(imp) | set(exp))]
-        except Exception as e: print(f"Agile rates error: {e}")
+            report('agile_forecast', out['agile'], 'No rates published', max((r[1] or r[0] for r in out['agile']), default=None))
+        except Exception as e:
+            print(f"Agile rates error: {e}")
+            report('agile_forecast', False, short_error(e))
     if CARBON_INTENSITY_URL:
-        try: out['carbon'] = fetch_carbon_forecast(half_hour, timeout)
-        except Exception as e: print(f"Carbon forecast error: {e}")
+        try:
+            out['carbon'] = fetch_carbon_forecast(half_hour, timeout)
+            report('carbon_forecast', out['carbon'], 'No forecast returned', max((r[0] for r in out['carbon']), default=None))
+        except Exception as e:
+            print(f"Carbon forecast error: {e}")
+            report('carbon_forecast', False, short_error(e))
     return out
 
 
@@ -707,6 +785,7 @@ def trim_log():
 
 def fetch_and_store():
     print(f"[{datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')}] Harvesting live data...")
+    started = datetime.now(timezone.utc)
 
     try:
         req_timeout = 20
@@ -716,8 +795,10 @@ def fetch_and_store():
         try:
             # Check if the wider internet is alive
             requests.get("https://1.1.1.1", timeout=5)
+            report('internet', True)
         except requests.exceptions.RequestException:
             print("-> ISP Offline. Switching to Local-Only mode (Forward-Filling Grid Data).")
+            report('internet', False, 'Offline')
             
             try:
                 # 1. Get the last known good row from the DB
@@ -745,8 +826,12 @@ def fetch_and_store():
                             pw_grid = pw_power.get('site', 0)
                             pw_level = pw.level()
                             pw_grid_status = pw.grid_status()
+                            report('powerwall', True)
+                        else:
+                            report('powerwall', False, 'No readings')
                     except Exception as pw_e:
                         print(f"PW Offline too: {pw_e}")
+                        report('powerwall', False, short_error(pw_e))
 
                 # 3. Stitch them together and insert
                 cursor.execute('''
@@ -774,6 +859,7 @@ def fetch_and_store():
                     last.get('embedded_wind_mw', 0),
                     last.get('bess_discharge_mw'), last.get('bess_charge_mw')
                 ))
+                save_health(cursor, now_utc, started)
                 conn.commit()
                 conn.close()
                 print("-> Success! Local-Only row added.")
@@ -788,6 +874,8 @@ def fetch_and_store():
         # === OCTOPUS API ===
         oct_imp_pence = fetch_octo_rate(OCT_IMP_TARIFF, now_utc, req_timeout)
         oct_exp_pence = fetch_octo_rate(OCT_EXP_TARIFF, now_utc, req_timeout)
+        if oct_imp_pence is not None and oct_exp_pence is not None: report('octopus_rates', True)
+        oct_imp_pence, oct_exp_pence = oct_imp_pence or 0.0, oct_exp_pence or 0.0
         oct_yest_imp, oct_yest_exp, oct_yest_gas, oct_final_date = fetch_octo_daily(req_timeout)
 
 
@@ -821,9 +909,11 @@ def fetch_and_store():
                     json.dump(weather_res, f)
             except Exception as e:
                 print(f"Could not save forecast.json: {e}")
+            report('weather', True)
 
         except Exception as e:                       # ← now you’ll actually SEE why it fails
             print(f"Weather fetch failed: {type(e).__name__}: {e}")
+            report('weather', False, short_error(e))
             try:
                 # --- NEW: Forward-fill from the last known database row ---
                 conn = sqlite3.connect('grid_data.db')
@@ -849,14 +939,21 @@ def fetch_and_store():
             intensity = ci_res.get('data', [{}])[0].get('intensity', {})
             carbon_intensity = intensity.get('actual')
             if carbon_intensity is None: carbon_intensity = intensity.get('forecast') or 0
-        except: carbon_intensity = 0
+            report('carbon', carbon_intensity, 'No figure for this half-hour', ci_res['data'][0].get('from'))
+        except Exception as e:
+            carbon_intensity = 0
+            report('carbon', False, short_error(e))
 
 
         # === DEMAND API ===
         try:
             demand_res = requests.get(ELEXON_DEMAND_URL, timeout=req_timeout).json() if ELEXON_DEMAND_URL else {}
-            latest_demand = max(demand_res.get('data', [{'demand': 0}]), key=lambda x: x.get('startTime', ''))['demand']
-        except: latest_demand = 0
+            latest_item = max(demand_res.get('data', [{'demand': 0}]), key=lambda x: x.get('startTime', ''))
+            latest_demand = latest_item['demand']
+            report('itsdo', latest_demand > 0, 'No demand figure', latest_item.get('startTime'))
+        except Exception as e:
+            latest_demand = 0
+            report('itsdo', False, short_error(e))
 
 
          # === GRID FREQUENCY API (all 15-second readings since the last run) ===
@@ -866,15 +963,23 @@ def fetch_and_store():
                 raise ValueError("ELEXON_FREQUENCY_URL not set in .env")
             freq_readings, freq_backfill = fetch_frequency(now_utc, req_timeout)
             grid_frequency = freq_readings[-1][1] if freq_readings else 50.0
+            report('frequency', freq_readings, 'No readings in the last 12 minutes',
+                   datetime.fromtimestamp(freq_readings[-1][0], timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ') if freq_readings else None)
         except Exception as e:
             print(f"Frequency error: {e}")
             grid_frequency = 50.0
+            report('frequency', False, short_error(e))
 
 
 
         # === SOLAR API ===
-        try: solar_mw = requests.get(SHEFFIELD_SOLAR_URL, timeout=req_timeout).json()['data'][0][2] if SHEFFIELD_SOLAR_URL else 0
-        except: solar_mw = 0 
+        try:
+            solar_row = requests.get(SHEFFIELD_SOLAR_URL, timeout=req_timeout).json()['data'][0] if SHEFFIELD_SOLAR_URL else [None, None, 0]
+            solar_mw = solar_row[2] or 0
+            if SHEFFIELD_SOLAR_URL: report('pvlive', True, data_time=solar_row[1])
+        except Exception as e:
+            solar_mw = 0
+            report('pvlive', False, short_error(e))
 
 
         # === EMBEDDED (LV) WIND API ===
@@ -911,12 +1016,15 @@ def fetch_and_store():
                 raw_val = closest_record[1].get('EMBEDDED_WIND_FORECAST', 0)
                 
                 embedded_wind_mw = int(float(raw_val)) if raw_val is not None else 0
+                report('lv_wind', True, data_time=closest_record[0].strftime('%Y-%m-%dT%H:%M:%SZ'))
             else:
                 embedded_wind_mw = 0
+                report('lv_wind', False, 'No forecast rows')
                 
         except Exception as e:
             print(f"LV Wind error: {e}")
             embedded_wind_mw = 0
+            report('lv_wind', False, short_error(e))
 
 
 
@@ -944,7 +1052,11 @@ def fetch_and_store():
                 if solar_mw > 0: generation["Solar"] = int(solar_mw)
                 if embedded_wind_mw > 0: generation["LV Wind"] = int(embedded_wind_mw)
                 total_generation = sum(generation.values())
-        except: pass
+                report('fuelinst', True, data_time=latest_time)
+            else:
+                report('fuelinst', False, 'No data returned')
+        except Exception as e:
+            report('fuelinst', False, short_error(e))
 
         true_demand = latest_demand + (solar_mw if solar_mw > 0 else 0) + (embedded_wind_mw if embedded_wind_mw > 0 else 0)
 
@@ -965,8 +1077,13 @@ def fetch_and_store():
                             item = data[0]
                             latest_price = float(item.get('systemSellPrice', 0) or 0)
                             latest_niv = float(item.get('netImbalanceVolume', 0) or 0)
+                            report('system_prices', True, data_time=item.get('startTime'))
                             break
-        except Exception as e: print(f"System price error: {e}")
+                else:
+                    report('system_prices', False, 'No prices published today or yesterday')
+        except Exception as e:
+            print(f"System price error: {e}")
+            report('system_prices', False, short_error(e))
 
 
         # === DAY-AHEAD & MARKET INDEX PRICES (MIDP PROXY) ===
@@ -1012,9 +1129,16 @@ def fetch_and_store():
                         latest_market_index_price = apx_price if apx_price is not None else (n2ex_price if n2ex_price is not None else 0.0)
                         # N2EX has had no volume for months, so this is usually 0. Not shown on the dashboard.
                         latest_day_ahead_price = n2ex_price if n2ex_price is not None else 0.0
+                        report('market_index', apx_price is not None or n2ex_price is not None, 'No traded price in the last 6 hours',
+                               next((item.get('startTime') for item in current_period_data if item.get('price') is not None), None))
+                    else:
+                        report('market_index', False, 'No data returned')
+                else:
+                    report('market_index', False, f"HTTP {res.status_code}")
                         
         except Exception as e:
             print(f"Pricing error: {e}")
+            report('market_index', False, short_error(e))
 
 
 
@@ -1026,7 +1150,11 @@ def fetch_and_store():
                 pw_power = pw.power()
                 if sum(pw_power.values()) != 0 or pw.level() > 0:
                     pw_solar, pw_home, pw_battery, pw_grid, pw_level, pw_grid_status = pw_power.get('solar', 0), pw_power.get('load', 0), pw_power.get('battery', 0), pw_power.get('site', 0), pw.level(), pw.grid_status()       
-        except: pass
+                    report('powerwall', True)
+                else:
+                    report('powerwall', False, 'No readings')
+        except Exception as e:
+            report('powerwall', False, short_error(e))
 
         # === CLOUDFLARE API ===
         cf_visits, cf_requests, cf_bytes = get_cloudflare_stats(debug=False)
@@ -1111,6 +1239,7 @@ def fetch_and_store():
             forecasts.get('carbon', []))
         # Log attempts as well as successes, so a failing source is retried after its interval rather than every run
         cursor.executemany('INSERT OR REPLACE INTO fetch_log VALUES (?, ?)', [(name, now_utc.isoformat()) for name in neso_demand['attempted'] + forecasts['attempted']])
+        save_health(cursor, now_utc, started)
         conn.commit()
         conn.close()
         print(f"-> Success! Row added.")
